@@ -1,0 +1,689 @@
+------------------------------------------------------------------------
+
+title: "корреляция (отдельные чанки)" author: "Алексей Курачёв" format: html editor: visual
+
+------------------------------------------------------------------------
+
+```{r}
+#| label: libraries
+library(data.table)
+library(DESeq2)
+library(WGCNA)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(limma)
+library(org.Rn.eg.db)
+library(AnnotationDbi)
+
+
+```
+
+```{r}
+#| label: palettes
+#| echo: false
+
+pal_neuron_group <- c(
+  Rat_neurons_only = "darkblue",
+  Rat_neurons_plus_human_astro = "tomato3"
+)
+
+heatmap_gradient <- colorRampPalette(c("darkblue", "white", "firebrick"))(100)
+
+stopifnot(is.character(pal_neuron_group))
+
+```
+
+```{r}
+#| label: load-data
+rat <- fread("/home/aleks/Desktop/Rat-Homo pipeline/ratNor7_gene_counts.txt")
+metadata <- fread("/home/aleks/Desktop/Rat-Homo pipeline/neoteny_cocultures_metadata.csv")
+
+```
+
+```{r}
+#| label: build-count-matrix-and-coldata
+gene_ids <- rat$Geneid
+count_mat <- as.matrix(rat[, -(1:6)])
+rownames(count_mat) <- gene_ids
+
+count_samples <- basename(colnames(count_mat))
+count_samples <- sub("_ratNor7_Aligned.sortedByCoord.out.bam$", "", count_samples)
+colnames(count_mat) <- count_samples
+
+metadata_sub <- metadata[!is.na(sample_id) & sample_id %in% count_samples]
+metadata_sub <- metadata_sub[match(count_samples, metadata_sub$sample_id), ]
+stopifnot(all(metadata_sub$sample_id == count_samples))
+
+coldata <- as.data.frame(metadata_sub)
+rownames(coldata) <- coldata$sample_id
+
+```
+
+```{r}
+#| label: define-two-neuron-groups-by-name
+cn <- colnames(count_mat)
+
+is_rat_neurons_only <-
+  grepl("RatNor_pn-Neurn", cn) &
+  !grepl("cocultur", cn) &
+  !grepl("HomSap|PanTro|MacMul", cn)
+
+is_rat_neurons_human_astro <-
+  grepl("HomSap_i-Astro", cn) &
+  grepl("cocultur", cn)
+
+keep_by_name <- is_rat_neurons_only | is_rat_neurons_human_astro
+samples_by_name <- cn[keep_by_name]
+
+group_sub <- ifelse(is_rat_neurons_only[keep_by_name],
+                    "Rat_neurons_only",
+                    "Rat_neurons_plus_human_astro")
+group_sub <- factor(group_sub,
+                    levels = c("Rat_neurons_only", "Rat_neurons_plus_human_astro"))
+
+table(group_sub)
+
+```
+
+```{r}
+#| label: subset-to-two-groups
+samples_to_use <- intersect(rownames(coldata), samples_by_name)
+samples_to_use <- colnames(count_mat)[colnames(count_mat) %in% samples_to_use]
+
+count_mat_sub <- count_mat[, samples_to_use, drop = FALSE]
+coldata_sub   <- coldata[samples_to_use, , drop = FALSE]
+stopifnot(identical(colnames(count_mat_sub), rownames(coldata_sub)))
+
+group_lookup <- data.frame(
+  sample_id = samples_by_name,
+  neuron_group = as.character(group_sub),
+  stringsAsFactors = FALSE
+)
+
+coldata_sub$neuron_group <- group_lookup$neuron_group[match(rownames(coldata_sub), group_lookup$sample_id)]
+stopifnot(!any(is.na(coldata_sub$neuron_group)))
+
+coldata_sub$neuron_group <- factor(coldata_sub$neuron_group,
+                                   levels = c("Rat_neurons_only", "Rat_neurons_plus_human_astro"))
+
+table(coldata_sub$neuron_group)
+```
+
+```{r}
+# диагностический блок batch
+
+sid <- coldata_sub$sample_id
+
+coldata_sub$FDU <- factor(
+  ifelse(grepl("plus_FDU", sid), "plus",
+  ifelse(grepl("no_FDU", sid), "no", NA))
+)
+
+coldata_sub$prep <- factor(
+  ifelse(grepl("OPprep", sid), "OPprep",
+  ifelse(grepl("IFprep", sid), "IFprep", NA))
+)
+
+coldata_sub$run_date <- sub("^RNA_Seq_([0-9]{2}-[0-9]{2}).*$", "\\1", sid)
+coldata_sub$run_date <- factor(coldata_sub$run_date)
+
+table(coldata_sub$neuron_group, coldata_sub$FDU)
+table(coldata_sub$neuron_group, coldata_sub$prep)
+table(coldata_sub$neuron_group, coldata_sub$run_date)
+
+```
+
+```{r}
+#| label: deseq2-vst-normalization
+dds0 <- DESeqDataSetFromMatrix(
+  countData = round(count_mat_sub),
+  colData   = coldata_sub,
+  design    = ~ 1
+)
+
+dds0 <- dds0[rowSums(counts(dds0)) > 0, ]
+dds0 <- estimateSizeFactors(dds0)
+vsd  <- vst(dds0, blind = TRUE)
+
+expr <- assay(vsd)          # genes x samples
+stopifnot(identical(colnames(expr), rownames(coldata_sub)))
+stopifnot(all(is.finite(expr)))
+
+datExpr0 <- t(expr)         # samples x genes (WGCNA format)
+stopifnot(identical(rownames(datExpr0), rownames(coldata_sub)))
+
+dim(datExpr0)
+
+```
+
+```{r}
+#| label: qc-and-gene-filter
+options(stringsAsFactors = FALSE)
+WGCNA::enableWGCNAThreads()
+
+gsg0 <- goodSamplesGenes(datExpr0, verbose = 3)
+if (!gsg0$allOK) {
+  datExpr0 <- datExpr0[gsg0$goodSamples, gsg0$goodGenes]
+  coldata_sub <- coldata_sub[rownames(datExpr0), , drop = FALSE]
+}
+
+mad_all <- apply(datExpr0, 2, mad, na.rm = TRUE)
+
+# stricter filter helps avoid 2 giant modules
+thr <- quantile(mad_all, 0.50, na.rm = TRUE)  # top 50% by MAD
+keep_genes <- mad_all > thr
+
+datExpr0 <- datExpr0[, keep_genes, drop = FALSE]
+stopifnot(all(is.finite(datExpr0)))
+
+dim(datExpr0)
+
+```
+
+```{r}
+#| label: pick-soft-threshold-all
+powers <- 1:20
+sft_all <- pickSoftThreshold(datExpr0, powerVector = powers, networkType = "signed", verbose = 5)
+
+softPower <- sft_all$powerEstimate
+if (is.na(softPower)) softPower <- 6
+
+softPower
+
+```
+
+```{r}
+net_all <- blockwiseModules(
+  datExpr0,
+  power = softPower,
+  networkType = "signed",
+  TOMType = "signed",
+  minModuleSize = 20,
+  deepSplit = 4,
+  mergeCutHeight = 0.40,
+  numericLabels = FALSE,
+  pamRespectsDendro = FALSE,
+  saveTOMs = FALSE,
+  verbose = 3,
+  maxBlockSize = 20000,
+  corType = "pearson"
+)
+
+
+moduleColors_all <- net_all$colors
+names(moduleColors_all) <- colnames(datExpr0)
+
+MEs_all <- net_all$MEs
+stopifnot(identical(rownames(MEs_all), rownames(datExpr0)))
+
+sort(table(moduleColors_all), decreasing = TRUE)[1:20]
+length(unique(moduleColors_all))
+
+```
+
+```{r}
+#| label: build-me-table
+ME_df <- data.frame(
+  Sample = rownames(MEs_all),
+  neuron_group = coldata_sub[rownames(MEs_all), "neuron_group"],
+  MEs_all,
+  row.names = rownames(MEs_all),
+  check.names = FALSE
+)
+
+stopifnot(!any(is.na(ME_df$neuron_group)))
+table(ME_df$neuron_group)
+
+```
+
+```{r}
+#| label: test-fdu-effect-in-control
+
+# берём только control
+ctrl_idx <- coldata_sub$neuron_group == "Rat_neurons_only"
+
+MEs_ctrl_only <- MEs_all[ctrl_idx, ]
+meta_ctrl_only <- coldata_sub[ctrl_idx, ]
+
+
+
+# убираем NA
+keep <- !is.na(meta_ctrl_only$FDU)
+MEs_ctrl_only <- MEs_ctrl_only[keep, ]
+meta_ctrl_only <- meta_ctrl_only[keep, ]
+
+# модель: ME ~ FDU
+ME_mat <- t(as.matrix(MEs_ctrl_only))
+design <- model.matrix(~ FDU, data = meta_ctrl_only)
+
+fit <- lmFit(ME_mat, design)
+fit <- eBayes(fit)
+
+res_fdu <- topTable(fit, coef = 2, number = Inf)
+head(res_fdu)
+
+#| label: sync-vsd-coldata
+
+stopifnot(identical(rownames(coldata_sub), colnames(assay(vsd))))
+
+colData(vsd)$neuron_group <- coldata_sub$neuron_group
+colData(vsd)$run_date     <- coldata_sub$run_date
+colData(vsd)$FDU          <- coldata_sub$FDU
+colData(vsd)$prep         <- coldata_sub$prep
+
+#| label: pca-two-plots
+
+plotPCA(vsd, intgroup = "run_date")
+plotPCA(vsd, intgroup = "neuron_group")
+
+table(coldata_sub$neuron_group, coldata_sub$run_date)
+
+
+
+```
+
+```{r}
+#| label: align-samples-and-build-design-safely
+
+# 1) ME matrix in limma-friendly orientation: modules x samples
+ME_mat <- t(as.matrix(MEs_all))
+
+# 2) Keep ONLY samples that exist in both ME_mat and coldata_sub
+common_samples <- intersect(colnames(ME_mat), rownames(coldata_sub))
+
+ME_mat <- ME_mat[, common_samples, drop = FALSE]
+coldata_me <- coldata_sub[common_samples, , drop = FALSE]
+
+# 3) Replace NA with "unknown" for covariates (so model.matrix won't drop rows)
+for (v in c("FDU", "prep", "run_date")) {
+  if (v %in% colnames(coldata_me)) {
+    x <- as.character(coldata_me[[v]])
+    x[is.na(x) | x == ""] <- "unknown"
+    coldata_me[[v]] <- factor(x)
+  }
+}
+
+# 4) Drop covariates that have <2 levels in this subset (otherwise contrasts error)
+candidate_covars <- c("FDU", "prep", "run_date")
+covars_present <- intersect(candidate_covars, colnames(coldata_me))
+covars_present <- covars_present[sapply(covars_present, function(v) nlevels(droplevels(coldata_me[[v]])) >= 2)]
+
+covars_present
+
+# 5) Build formula
+form <- as.formula(
+  paste("~ neuron_group",
+        if (length(covars_present) > 0) paste("+", paste(covars_present, collapse = " + ")) else "")
+)
+
+# IMPORTANT: na.action = na.pass so it never drops rows
+design <- model.matrix(form, data = coldata_me, na.action = na.pass)
+
+# 6) Final sanity: exact same sample order
+stopifnot(identical(rownames(design), colnames(ME_mat)))
+stopifnot(nrow(design) == ncol(ME_mat))
+
+# print quick diagnostics
+dim(design)
+dim(ME_mat)
+
+```
+
+```{r}
+#| label: limma-compare-modules
+
+fit <- lmFit(ME_mat, design)
+fit <- eBayes(fit)
+
+coef_name <- grep("^neuron_group", colnames(design), value = TRUE)[1]
+coef_name
+
+me_stats <- topTable(fit, coef = coef_name, number = Inf, sort.by = "P")
+me_stats$module <- rownames(me_stats)
+me_stats <- me_stats[, c("module", "logFC", "P.Value", "adj.P.Val")]
+
+head(me_stats, 20)
+
+```
+
+```{r}
+#| label: compare-modules-with-linear-model-fixed
+
+candidate_covars <- c("FDU", "prep", "run_date")
+covars_present <- intersect(candidate_covars, colnames(coldata_me))
+
+form <- as.formula(
+  paste("~ neuron_group",
+        if (length(covars_present) > 0) paste("+", paste(covars_present, collapse = " + ")) else "")
+)
+
+design <- model.matrix(form, data = coldata_me)
+
+ME_mat <- t(as.matrix(MEs_all))  # modules x samples
+
+# КРИТИЧНО: design rows = samples, ME_mat columns = samples
+stopifnot(nrow(design) == ncol(ME_mat))
+stopifnot(identical(rownames(design), colnames(ME_mat)))
+
+fit <- lmFit(ME_mat, design)
+fit <- eBayes(fit)
+
+coef_name <- grep("^neuron_group", colnames(design), value = TRUE)[1]
+
+me_stats <- topTable(fit, coef = coef_name, number = Inf, sort.by = "P")
+me_stats$module <- rownames(me_stats)
+me_stats <- me_stats[, c("module", "logFC", "P.Value", "adj.P.Val")]
+
+head(me_stats, 20)
+
+```
+
+```{r}
+#| label: plot-top-modules
+
+top_modules <- head(me_stats$module, 6)
+
+plot_df <- ME_df %>%
+  dplyr::select(neuron_group, dplyr::all_of(top_modules)) %>%
+  tidyr::pivot_longer(cols = dplyr::all_of(top_modules),
+                      names_to = "module",
+                      values_to = "ME")
+
+ggplot(plot_df, aes(x = neuron_group, y = ME, fill = neuron_group)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.15, alpha = 0.7) +
+  facet_wrap(~ module, scales = "free_y") +
+  scale_fill_manual(values = pal_neuron_group) +
+  theme_bw() +
+  labs(title = "Top changing module eigengenes (adjusted for covariates)",
+       x = "", y = "Module eigengene (ME)")
+
+```
+
+```{r}
+#| label: extract-genes-from-a-module
+# Example: take the most significant module
+best_module <- gsub("^ME", "", me_stats$module[1])
+
+genes_in_best <- names(moduleColors_all)[moduleColors_all == best_module]
+length(genes_in_best)
+head(genes_in_best, 20)
+
+
+```
+A
+
+```{r}
+#| label: pick-module-to-interpret
+module_color <- "turquoise"   # <- поменяй на "grey", "blue" и т.д.
+ME_name <- paste0("ME", module_color)
+
+stopifnot(ME_name %in% colnames(MEs_all))
+table(moduleColors_all)[module_color]
+
+```
+
+```{r}
+#| label: libraries-enrichment
+library(clusterProfiler)
+library(enrichplot)
+
+```
+
+```{r}
+#| label: pick-module-to-interpret
+module_color <- "turquoise"   # <- change to "grey", "blue", etc.
+ME_name <- paste0("ME", module_color)
+
+stopifnot(ME_name %in% colnames(MEs_all))
+table(moduleColors_all)[module_color]
+
+```
+
+
+```{r}
+#| label: qc-filter-function
+# Minimal helper: QC + MAD filter for WGCNA matrices (samples x genes)
+qc_filter <- function(datExpr, mad_quantile = 0.50, verbose = TRUE) {
+  stopifnot(is.matrix(datExpr))
+  if (verbose) message("qc_filter(): input dim = ", paste(dim(datExpr), collapse = " x "))
+
+  # goodSamplesGenes QC
+  gsg <- WGCNA::goodSamplesGenes(datExpr, verbose = if (verbose) 3 else 0)
+  if (!gsg$allOK) {
+    datExpr <- datExpr[gsg$goodSamples, gsg$goodGenes, drop = FALSE]
+    if (verbose) message("qc_filter(): after goodSamplesGenes dim = ", paste(dim(datExpr), collapse = " x "))
+  }
+
+  # MAD filter across genes
+  mad_all <- apply(datExpr, 2, mad, na.rm = TRUE)
+  thr <- quantile(mad_all, mad_quantile, na.rm = TRUE)
+  keep <- mad_all > thr
+
+  datExpr <- datExpr[, keep, drop = FALSE]
+  if (verbose) message("qc_filter(): after MAD filter dim = ", paste(dim(datExpr), collapse = " x "))
+
+  stopifnot(all(is.finite(datExpr)))
+  datExpr
+}
+
+
+```
+
+
+
+```{r}
+#| label: rebuild-datExpr0_f-for-kME
+# expr must already exist from vst (genes x samples)
+datExpr0 <- t(expr)  # samples x genes
+
+# Use the SAME mad_quantile you used before building net_all
+datExpr0_f <- qc_filter(datExpr0, mad_quantile = 0.50)
+
+# Align gene space with moduleColors_all (from net_all)
+common_genes <- intersect(colnames(datExpr0_f), names(moduleColors_all))
+datExpr0_f <- datExpr0_f[, common_genes, drop = FALSE]
+moduleColors_all <- moduleColors_all[common_genes]
+
+stopifnot(identical(colnames(datExpr0_f), names(moduleColors_all)))
+
+```
+
+
+```{r}
+#| label: rebuild-datExpr0_f-for-kME
+# expr must already exist from vst (genes x samples)
+datExpr0 <- t(expr)  # samples x genes
+
+# Use the SAME mad_quantile you used before building net_all
+datExpr0_f <- qc_filter(datExpr0, mad_quantile = 0.50)
+
+# Align gene space with moduleColors_all (from net_all)
+common_genes <- intersect(colnames(datExpr0_f), names(moduleColors_all))
+datExpr0_f <- datExpr0_f[, common_genes, drop = FALSE]
+moduleColors_all <- moduleColors_all[common_genes]
+
+stopifnot(identical(colnames(datExpr0_f), names(moduleColors_all)))
+
+
+```
+
+
+```{r}
+#| label: get-module-genes
+genes_module <- names(moduleColors_all)[moduleColors_all == module_color]
+genes_ens <- sub("\\..*$", "", genes_module)
+
+length(genes_module)
+head(genes_module)
+
+```
+
+
+```{r}
+#| label: annotate-module-genes
+gene_map <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = unique(genes_ens),
+  keytype = "ENSEMBL",
+  columns = c("ENSEMBL", "SYMBOL", "GENENAME", "ENTREZID")
+) %>%
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
+
+head(gene_map)
+
+```
+
+
+```{r}
+#| label: hub-genes-by-kME
+stopifnot(all(genes_module %in% colnames(datExpr0_f)))
+stopifnot(identical(rownames(datExpr0_f), rownames(MEs_all)))
+
+kME_mat <- WGCNA::signedKME(
+  datExpr0_f[, genes_module, drop = FALSE],
+  MEs_all[, ME_name, drop = FALSE]
+)
+
+hub_tbl <- data.frame(
+  gene_id  = rownames(kME_mat),
+  kME      = kME_mat[, 1],
+  ENSEMBL  = sub("\\..*$", "", rownames(kME_mat)),
+  stringsAsFactors = FALSE
+) %>%
+  dplyr::left_join(gene_map, by = "ENSEMBL") %>%
+  dplyr::arrange(desc(kME))
+
+head(hub_tbl, 30)
+
+
+```
+
+
+```{r}
+#| label: go-enrichment-bp
+ego_bp <- enrichGO(
+  gene          = unique(genes_ens),
+  OrgDb         = org.Rn.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+ego_bp
+head(as.data.frame(ego_bp), 20)
+
+
+```
+
+
+```{r}
+#| label: go-enrichment-bp
+ego_bp <- enrichGO(
+  gene          = unique(genes_ens),
+  OrgDb         = org.Rn.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+ego_bp
+head(as.data.frame(ego_bp), 20)
+
+
+```
+
+```{r}
+#| label: go-dotplot
+dotplot(ego_bp, showCategory = 15) +
+  ggplot2::ggtitle(paste0("GO BP enrichment: ", module_color, " module"))
+
+```
+
+```{r}
+#| label: kegg-enrichment
+entrez <- na.omit(unique(gene_map$ENTREZID))
+
+ekegg <- enrichKEGG(
+  gene         = entrez,
+  organism     = "rno",
+  pvalueCutoff = 0.05
+)
+
+ekegg
+head(as.data.frame(ekegg), 20)
+
+```
+
+```{r}
+#| label: kegg-dotplot
+dotplot(ekegg, showCategory = 15) +
+  ggplot2::ggtitle(paste0("KEGG enrichment: ", module_color, " module"))
+
+```
+
+```{r}
+#| label: module-direction
+# me_stats stores modules like "MEturquoise"
+this_row <- me_stats[me_stats$module == ME_name, , drop = FALSE]
+this_row
+
+```
+
+```{r}
+moduleColors_all <- net_all$colors
+table(moduleColors_all) |> sort(decreasing = TRUE) |> head(20)
+length(unique(moduleColors_all))
+dim(net_all$MEs)
+
+
+```
+```{r}
+# 1) библиотечные размеры
+libsize <- colSums(count_mat_sub)
+summary(libsize)
+tapply(libsize, coldata_sub$neuron_group, summary)
+
+# 2) доля нулей
+zero_frac <- colMeans(count_mat_sub == 0)
+tapply(zero_frac, coldata_sub$neuron_group, summary)
+
+top20 <- head(hub_tbl, 20)
+top20
+
+module_color <- "blue"
+ME_name <- paste0("ME", module_color)
+
+
+genes_module_blue <- names(moduleColors_all)[moduleColors_all == module_color]
+length(genes_module_blue)
+
+genes_ens_blue <- sub("\\..*$", "", genes_module_blue)
+
+
+library(clusterProfiler)
+
+ego_blue <- enrichGO(
+  gene          = unique(genes_ens_blue),
+  OrgDb         = org.Rn.eg.db,
+  keyType       = "ENSEMBL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff  = 0.05,
+  qvalueCutoff  = 0.2,
+  readable      = TRUE
+)
+
+head(as.data.frame(ego_blue), 20)
+
+me_stats
+
+```
+
