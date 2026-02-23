@@ -1,8 +1,30 @@
-------------------------------------------------------------------------
-
-title: "корреляция (отдельные чанки)" author: "Алексей Курачёв" format: html editor: visual
-
-------------------------------------------------------------------------
+# ------------------------------------------------------------
+# WGCNA and Functional Enrichment Analysis
+#
+# This script performs weighted gene co-expression network analysis (WGCNA)
+# on VST-normalized RNA-seq data from rat neurons ± human astrocyte exposure.
+#
+# Workflow includes:
+# - Quality control and MAD-based gene filtering
+# - Soft-threshold power selection
+# - Network construction (signed TOM)
+# - Module detection and merging
+# - Module–trait association analysis
+# - Linear modeling of module eigengenes (limma)
+# - Hub gene identification (kME)
+# - GO (Biological Process) enrichment analysis
+# - KEGG pathway enrichment analysis
+#
+# Input:
+# - VST-normalized expression matrix
+# - Sample metadata (neuron_group, run_date, FDU, prep)
+#
+# Output:
+# - Module assignments
+# - Module eigengene statistics
+# - Hub gene tables
+# - GO/KEGG enrichment results
+# ------------------------------------------------------------
 
 ```{r}
 #| label: libraries
