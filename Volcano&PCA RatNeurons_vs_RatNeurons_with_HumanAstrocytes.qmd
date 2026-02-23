@@ -1,6 +1,6 @@
 ---
 title: "Volcanoplot&PCA_human-rat_rat"
-author: "Aliaksei"
+author: "Aliaksei Kurachou"
 format: html
 editor: visual
 ---
