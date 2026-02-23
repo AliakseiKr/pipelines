@@ -95,16 +95,13 @@ clean_sample_id <- function(x) {
   x
 }
 
-# чистим colnames один раз
 colnames(count_mat) <- clean_sample_id(colnames(count_mat))
 
-# сохраняем cn, потому что дальше он нужен
 cn <- colnames(count_mat)
 
-# если хочешь отдельно count_samples — он теперь то же самое
+
 count_samples <- cn
 
-# контроль: нет ли дубликатов
 stopifnot(!anyDuplicated(cn))
 
 # опционально -посмотреть первые 3
