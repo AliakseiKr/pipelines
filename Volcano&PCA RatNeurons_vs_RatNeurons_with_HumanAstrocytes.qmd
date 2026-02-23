@@ -48,8 +48,6 @@ neoteny_cocultures_metadata <- read.csv(
 )
 
 
-
-
 ```
 
 # **Data preparation**
