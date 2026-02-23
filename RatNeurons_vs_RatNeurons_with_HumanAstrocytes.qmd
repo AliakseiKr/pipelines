@@ -1,0 +1,411 @@
+---
+title: "Volcanoplot&PCA_human-rat_rat"
+author: "Aliaksei"
+format: html
+editor: visual
+---
+
+# Libraries
+
+```{r}
+library(data.table)
+library(DESeq2)
+library(ashr)
+library(ggplot2)
+library(dplyr)
+library(org.Rn.eg.db)
+library(ggrepel)
+source("/home/aleks/Desktop/Rat-Homo pipeline/utilities: rat vs rat+human-astrocytes.R")
+
+
+```
+
+```{r}
+#| label: color-palettes
+#| echo: false
+
+## --- Base palettes (one place to edit) ---
+
+# Main species palette (for ggplot, annotations, etc.)
+pal_group <- c(
+  Rat_neurons_only            = "black",
+  Rat_neurons_plus_human_astro = "darkblue"
+)
+
+
+```
+
+# Load Data
+
+```{r}
+# wczytywanie
+rat <- fread("/home/aleks/Desktop/Rat-Homo pipeline/ratNor7_gene_counts.txt")
+
+#to sie powtarza nizej
+neoteny_cocultures_metadata <- read.csv(
+  "/home/aleks/Desktop/Rat-Homo pipeline/neoteny_cocultures_metadata.csv",
+  stringsAsFactors = FALSE
+)
+
+
+
+
+```
+
+# **Data preparation**
+
+## Load & Align Metadata
+
+```{r}
+
+# count_mat (geny x probki)
+gene_ids <- rat$Geneid
+count_mat <- as.matrix(rat[, -(1:6)])
+rownames(count_mat) <- gene_ids
+
+count_samples <- basename(colnames(count_mat))
+count_samples <- sub("_ratNor7_Aligned.sortedByCoord.out.bam$", "", count_samples)
+colnames(count_mat) <- count_samples
+
+metadata <- fread("/home/aleks/Desktop/Rat-Homo pipeline/neoteny_cocultures_metadata.csv")
+
+# metadata only for samples present in counts (safe NA handling)
+metadata_sub <- metadata[!is.na(sample_id) & sample_id %in% count_samples]
+
+# order metadata exactly like count_samples (cleaned)
+metadata_sub <- metadata_sub[match(count_samples, metadata_sub$sample_id), ]
+
+# hard check
+stopifnot(all(metadata_sub$sample_id == count_samples))
+
+# build coldata for DESeq2
+coldata <- as.data.frame(metadata_sub)
+rownames(coldata) <- coldata$sample_id
+
+```
+
+## Prepare-count-matrix
+
+## Clean Sample Names
+
+```{r}
+clean_sample_id <- function(x) {
+  x <- basename(x)
+  x <- sub("_ratNor7_Aligned\\.sortedByCoord\\.out\\.bam$", "", x)
+  x <- sub("_Aligned\\.sortedByCoord\\.out\\.bam$", "", x)
+  x <- sub("_ratNor7$", "", x)
+  x
+}
+
+# чистим colnames один раз
+colnames(count_mat) <- clean_sample_id(colnames(count_mat))
+
+# сохраняем cn, потому что дальше он нужен
+cn <- colnames(count_mat)
+
+# если хочешь отдельно count_samples — он теперь то же самое
+count_samples <- cn
+
+# контроль: нет ли дубликатов
+stopifnot(!anyDuplicated(cn))
+
+# опционально -посмотреть первые 3
+cn[1:3]
+
+```
+
+## Parse Species Labels
+
+```{r}
+
+
+# 1) Rat neurons only: RatNor_pn-Neurn, но НЕ coculture/cocultures
+is_rat_neurons_only <-
+  grepl("RatNor_pn-Neurn", cn) &
+  !grepl("cocultur", cn) &                 # ловит coculture и cocultures
+  !grepl("HomSap|PanTro|MacMul", cn)       # на всякий случай
+
+# 2) Rat neurons + Human astro: HomSap_i-Astro + coculture/cocultures
+# (НЕ требуем "Neurons", потому что у части HomSap-сэмплов его нет: OPprep/IFprep и т.п.)
+is_rat_neurons_human_astro <-
+  grepl("HomSap_i-Astro", cn) &
+  grepl("cocultur", cn)
+
+keep <- is_rat_neurons_only | is_rat_neurons_human_astro
+
+count_mat_sub <- count_mat[, keep, drop = FALSE]
+
+group_sub <- ifelse(is_rat_neurons_only[keep],
+                    "RatNeuronsOnly",
+                    "RatNeuronsPlusHumanAstro")
+group_sub <- factor(group_sub,
+                    levels = c("RatNeuronsOnly", "RatNeuronsPlusHumanAstro"))
+
+table(group_sub)
+
+# (опционально) посмотреть, что именно выбралось
+cn[is_rat_neurons_only]
+cn[is_rat_neurons_human_astro]
+
+
+
+
+
+keep_by_name <- is_rat_neurons_only | is_rat_neurons_human_astro
+samples_by_name <- cn[keep_by_name]
+
+
+
+
+```
+
+## Subset Rat/Human Samples
+
+```{r}
+
+# metadata фильтр (Rat/Human, без NA) + пересечение с выбором по имени
+keep_meta <- !is.na(coldata$species) & coldata$species %in% c("Rat", "Human")
+samples_meta <- rownames(coldata)[keep_meta]
+
+samples_to_use <- intersect(samples_meta, samples_by_name)
+
+# --- MINIMAL FIX 1: ensure order matches count matrix columns ---
+samples_to_use <- samples_to_use[samples_to_use %in% colnames(count_mat)]
+samples_to_use <- colnames(count_mat)[colnames(count_mat) %in% samples_to_use]
+
+count_mat_sub <- count_mat[, samples_to_use, drop = FALSE]
+coldata_sub   <- coldata[samples_to_use, , drop = FALSE]
+
+stopifnot(identical(colnames(count_mat_sub), rownames(coldata_sub)))
+
+# --- MINIMAL FIX 2: add clear English group factor (from your name-based grouping) ---
+group_lookup <- data.frame(
+  sample_id = samples_by_name,
+  group_raw = as.character(group_sub),
+  stringsAsFactors = FALSE
+)
+
+coldata_sub$neuron_group <- group_lookup$group_raw[match(rownames(coldata_sub), group_lookup$sample_id)]
+stopifnot(!any(is.na(coldata_sub$neuron_group)))
+
+coldata_sub$neuron_group <- factor(
+  coldata_sub$neuron_group,
+  levels = c("RatNeuronsOnly", "RatNeuronsPlusHumanAstro"),
+  labels = c("Rat_neurons_only", "Rat_neurons_plus_human_astro")
+)
+
+table(coldata_sub$neuron_group)
+
+```
+
+# DESeq2
+
+```{r}
+# Use the experimental factor you defined (not species)
+coldata_sub$neuron_group <- relevel(factor(coldata_sub$neuron_group),
+                                   ref = "Rat_neurons_only")
+
+dds <- DESeqDataSetFromMatrix(
+  countData = round(count_mat_sub),   # counts should be integers
+  colData   = coldata_sub,
+  design    = ~ neuron_group
+)
+
+dds <- DESeq(dds)
+
+res <- results(dds,
+               contrast = c("neuron_group",
+                            "Rat_neurons_plus_human_astro",
+                            "Rat_neurons_only"))
+
+
+```
+
+## Shrink LFC and Summarize
+
+```{r}
+res_shrunk <- lfcShrink(
+  dds,
+  contrast = c("neuron_group",
+               "Rat_neurons_plus_human_astro",
+               "Rat_neurons_only"),
+  type = "ashr"
+)
+
+res_df <- as.data.frame(res_shrunk)
+res_df$ensembl_gene_id <- rownames(res_df)
+
+head(res_df[order(res_df$padj), ], 20)
+summary(res_df)
+
+sum(res_df$padj < 0.05, na.rm = TRUE)
+sum(res_df$padj < 0.05 & abs(res_df$log2FoldChange) > 1, na.rm = TRUE)
+
+
+
+```
+
+## Annotate Genes
+
+```{r}
+# Annotate genes (Rat annotation stays the same)
+gene_map <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = unique(sub("\\..*$", "", res_df$ensembl_gene_id)),
+  keytype = "ENSEMBL",
+  columns = c("ENSEMBL", "SYMBOL", "GENENAME")
+) %>%
+  distinct(ENSEMBL, .keep_all = TRUE) %>%
+  rename(ensembl_gene_id = ENSEMBL)
+
+
+```
+
+```{r}
+#| label: merge-annotations
+gene_map_df <- as.data.frame(gene_map)
+
+# очистка версий
+gene_map_df$ensembl_clean <- sub("\\..*$", "", gene_map_df$ensembl_gene_id)
+
+res_df$ensembl_clean <- sub("\\..*$", "", res_df$ensembl_gene_id)
+
+# merge БЕЗ dplyr::select
+res_annot <- merge(
+  res_df,
+  gene_map_df[, c("ensembl_clean", "SYMBOL", "GENENAME")],
+  by = "ensembl_clean",
+  all.x = TRUE
+)
+
+# удобная метка
+res_annot$label <- ifelse(
+  !is.na(res_annot$SYMBOL) & res_annot$SYMBOL != "",
+  res_annot$SYMBOL,
+  res_annot$ensembl_clean
+)
+
+
+```
+
+# Visualizations
+
+## Volcano-plot
+
+```{r}
+#| label: volcano-pick-genes
+# thresholds
+padj_thr <- 0.05
+lfc_thr  <- 1
+
+# classify points
+res_annot <- res_annot %>%
+  mutate(
+    sig = case_when(
+      !is.na(padj) & padj < padj_thr & log2FoldChange >=  lfc_thr ~ "Up",
+      !is.na(padj) & padj < padj_thr & log2FoldChange <= -lfc_thr ~ "Down",
+      TRUE ~ "NS"
+    ),
+    neglog10_padj = -log10(padj)
+  )
+
+# choose genes to label: top by padj among significant
+top_up <- res_annot %>%
+  filter(padj < 0.05 & log2FoldChange > 1) %>%
+  arrange(padj) %>%
+  slice_head(n = 15)
+
+top_down <- res_annot %>%
+  filter(padj < 0.05 & log2FoldChange < -1) %>%
+  arrange(padj) %>%
+  slice_head(n = 7)
+
+label_df <- rbind(top_up, top_down)
+
+
+```
+
+```{r}
+#| label: volcano-plot
+#| fig.height: 6
+#| fig.width: 8
+
+vol_pal <- c(NS = "grey70", Up = "darkblue", Down = "black")
+
+ggplot(res_annot, aes(x = log2FoldChange, y = neglog10_padj)) +
+  geom_point(aes(color = sig), alpha = 0.7, size = 1, na.rm = TRUE) +
+  scale_color_manual(values = vol_pal) +
+  geom_vline(xintercept = c(-lfc_thr, lfc_thr), linetype = "dashed") +
+  geom_hline(yintercept = -log10(padj_thr), linetype = "dashed") +
+  ggrepel::geom_text_repel(
+    data = label_df,
+    aes(label = label),
+    size = 3,
+    max.overlaps = Inf,
+    box.padding = 0.4,
+    point.padding = 0.2,
+    min.segment.length = 0
+  ) +
+  labs(
+    title = "Volcano plot (lfcShrink, Rat neurons ± human astro exposure)",
+    x = "log2FoldChange (Rat_neurons_plus_human_astro / Rat_neurons_only)",
+    y = "-log10(adjusted p-value)",
+    color = "DE class"
+  ) +
+  theme_minimal()
+
+
+
+```
+
+```{r}
+vsd <- vst(dds, blind = TRUE)
+pca_data <- plotPCA(vsd, intgroup = "neuron_group", returnData = TRUE)
+percentVar <- round(100 * attr(pca_data, "percentVar"), 1)
+pca_data$name <- rownames(pca_data)
+```
+
+## PCA
+
+```{r}
+#| label: pca-plot-clean
+#| fig.height: 6
+#| fig.width: 8
+
+ggplot(pca_data, aes(PC1, PC2, color = neuron_group)) +
+  geom_point(size = 4, alpha = 0.9) +
+  scale_color_manual(values = pal_group) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  labs(color = "Group") +
+  theme_bw() +
+  theme(
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+
+```
+
+```{r}
+#| label: pca-sample-table-clean
+pca_table <- pca_data %>%
+  dplyr::transmute(
+    Sample = name,
+    Group  = neuron_group,
+    PC1    = round(PC1, 2),
+    PC2    = round(PC2, 2)
+  ) %>%
+  dplyr::arrange(Group, PC1)
+
+pca_table
+
+
+
+
+```
+
+```{r}
+#| label: annotation-qc
+sum(!is.na(res_annot$SYMBOL) & res_annot$SYMBOL != "")
+
+```
