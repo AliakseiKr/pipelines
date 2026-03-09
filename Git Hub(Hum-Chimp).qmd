@@ -1,0 +1,661 @@
+---
+title: "Human vs Chimpanzee"
+author: "Aliaksei Kurachou"
+format: html
+editor: visual
+---
+
+# Load libraries
+
+```{r}
+library(data.table)
+library(WGCNA)
+library(DESeq2)
+library(GEOquery)
+library(tidyverse)
+library(CorLevelPlot)
+library(gridExtra)
+
+
+```
+
+# Prepare metadata
+
+```{r}
+library(dplyr)
+
+# samples 
+samples <- c(
+  "X"
+)
+
+# 2) metadata
+meta <- tibble(sample = samples) %>%
+  mutate(
+    species = case_when(
+      grepl("X", sample) ~ "X",
+      grepl("Y", sample) ~ "Y",
+      TRUE ~ NA_character_
+    ),
+
+
+    condition_chemical = case_when(
+      grepl("X", sample) ~ "X",
+      grepl("Y", sample) ~ "Y",
+      grepl("Z", sample) ~ "Z",
+      grepl("H", sample) ~ "H",
+      grepl("L", sample) ~ "L",
+      grepl("B", sample) ~ "B",
+      grepl("D", sample) ~ "D",
+      grepl("F", sample) ~ "F",
+      TRUE ~ NA_character_
+    ),
+
+    condition_date = case_when(
+      grepl("RNA_Seq_05-24", sample) ~ "05-24",
+      grepl("RNA_Seq_12-24", sample) ~ "12-24",
+      grepl("RNA_Seq_03-25", sample) ~ "03-25",
+      TRUE ~ NA_character_
+    ),
+
+    condition_prep = case_when(
+      grepl("K", sample) ~ "K",
+      grepl("D", sample) ~ "D",
+      TRUE ~ "none"
+    )
+  ) %>%
+  mutate(
+    species = factor(species),
+    condition_chemical = factor(condition_chemical),
+    condition_date = factor(condition_date),
+    condition_prep = factor(condition_prep)
+  )
+
+# rownames как в DESeq2
+meta <- as.data.frame(meta)
+rownames(meta) <- meta$sample
+meta$sample <- NULL
+
+meta
+
+```
+
+# Count data preprocessing
+
+## read count data
+
+```{r}
+#fetch data
+count_data <-fread("X.txt")
+
+```
+
+## prepare count data
+
+```{r}
+
+# gene ids
+gene_id <- count_data$Geneid
+
+# choose count columns
+count_df <- as.data.frame(count_data[, 7:ncol(count_data)])  
+rownames(count_df) <- gene_id
+
+# making numeric
+count_mat <- as.matrix(count_df)
+storage.mode(count_mat) <- "numeric"
+
+# clean sample names
+count_samples <- colnames(count_mat)
+count_samples <- sub("^X", "", count_samples)
+count_samples <- sub("X", "", count_samples)
+colnames(count_mat) <- count_samples
+
+# matching counts and meta samples
+meta_samples <- rownames(meta)
+common <- intersect(colnames(count_mat), meta_samples)
+
+cat("Samples in meta:", length(meta_samples), "\n")
+cat("Samples in count_mat:", ncol(count_mat), "\n")
+cat("Common samples:", length(common), "\n")
+
+
+count_mat_sub <- count_mat[, common, drop = FALSE]
+meta_sub <- meta[common, , drop = FALSE]
+
+stopifnot(identical(colnames(count_mat_sub), rownames(meta_sub)))
+
+
+```
+
+# Quality control & outliers finding
+
+## gSG and hierarchial clustering methods to detect the outliers
+
+```{r,fig.height=10, fig.width=10}
+
+#quality control
+
+gsg<-goodSamplesGenes(t(count_mat_sub))
+summary(gsg)
+gsg$allOK
+
+table(gsg$goodGenes)
+table(gsg$goodSamples)
+
+#repel genes that was detected as outliers
+count_mat_sub<-count_mat_sub[gsg$goodGenes == TRUE,]
+
+#hierarchial clustering 
+short_labels <- with(meta_sub, paste(species, condition_date, condition_chemical, condition_prep, sep = "_"))
+
+# check length
+head(short_labels)
+
+#find correlation and visualize it
+x <- log2(as.matrix(count_mat_sub) + 1)
+d <- as.dist(1 - cor(x, method = "pearson"))
+outlier_clusters2 <- hclust(d, method = "average")
+
+plot(outlier_clusters2, labels = short_labels, cex = 0.8, hang = -1,
+     main = "Sample clustering (log2, 1 - cor)")
+
+```
+
+## pca method to detect the outliers
+
+```{r,fig.height=6, fig.width=10}
+
+#pca-method(compute principal "prcomp" companents for the expression data) to detect outliers 
+
+X <- t(count_mat_sub)             # samples x genes
+X <- log1p(X)                     # стабилизация
+pca <- prcomp(X, center = TRUE, scale. = TRUE)
+
+pca.data <- as.data.frame(pca$x)
+pca.var <- pca$sdev^2
+pca.var.percent <- round(pca.var / sum(pca.var) * 100, 2)
+
+ggplot(pca.data, aes(PC1, PC2)) +
+  geom_point(size = 2) +
+  geom_text(aes(label = rownames(pca.data)), vjust = -0.7, size = 3) +
+  labs(
+    x = paste0("PC1: ", pca.var.percent[1], "%"),
+    y = paste0("PC2: ", pca.var.percent[2], "%")
+  ) +
+  theme_bw()
+
+```
+
+## outliers expel
+
+```{r}
+samples.to.be.excluded <- c(
+    "Outlier_1",
+  "Outlier_2"
+)
+
+# 1) remove sample from counts (genes x samples)
+count_mat_sub_no_outliers <- count_mat_sub[, !(colnames(count_mat_sub) %in% samples.to.be.excluded), drop = FALSE]
+
+# 2) remove sample from metadata (samples x traits) 
+meta_sub_no_outliers <- meta_sub[!(rownames(meta_sub) %in% samples.to.be.excluded), , drop = FALSE]
+
+# 3) sanity: same samples, same order
+stopifnot(identical(colnames(count_mat_sub_no_outliers), rownames(meta_sub_no_outliers)))
+
+
+if (!("X" %in% colnames(count_mat_sub_no_outliers))) {
+  print("Y")
+}
+
+colnames(count_mat_sub_no_outliers)
+```
+
+## group samples accotding with their special affiliation
+
+```{r}
+#| label: define-human-vs-chimp-groups
+
+cn <- colnames(count_mat_sub_no_outliers)
+
+human_group <-
+  grepl("X", cn)
+
+chimpanzee_group <-
+  grepl("Y", cn)
+keep_by_name <- human_group | chimpanzee_group
+samples_by_name <- cn[keep_by_name]
+
+group_sub <- ifelse(human_group[keep_by_name],
+                    "H_X",
+                    "C_X")
+
+group_sub <- factor(group_sub,
+                    levels = c("H_X", "C_X"))
+
+table(group_sub)
+```
+
+# Run DESeq2
+
+```{r}
+
+dds <- DESeqDataSetFromMatrix(
+  countData = count_mat_sub_no_outliers,
+  colData   = meta_sub_no_outliers,
+  design    = ~ condition_date + species
+)
+
+dds <- DESeq(dds)
+
+res <- results(dds, contrast = c("species", "H", "C"))
+```
+
+## filtering and normalizing DESeq results
+
+```{r}
+
+# filtr: >=15 reads min in 75% samples
+dds50 <- dds[rowSums(counts(dds) >= 15) >= ceiling(ncol(dds) * 0.75), ]
+nrow(dds50)
+
+# normalization (VST)
+dds_norm <- vst(dds50, blind = FALSE)
+
+# get normalazing meanings
+norm.counts <- t(assay(dds_norm))
+```
+
+# Estimating sft
+
+```{r}
+# making powers vector
+power <- c(c(1:20), seq(from = 22, to = 50, by = 2))
+
+#evaluate-scale-free-topology
+sft <- pickSoftThreshold(norm.counts,
+                  powerVector = power,
+                  networkType = "signed",
+                  verbose = 5)
+
+#vizualization of evaluation
+sft.data <- sft$fitIndices
+
+```
+
+## two plots visualizing sft meaning dependence from power
+
+```{r}
+#visualizing different powers
+library(ggrepel)
+
+ggplot(sft.data, aes(x = Power, y = SFT.R.sq, label = Power)) +
+  geom_point(size = 0.6) +
+  geom_text_repel(size = 3) +
+  geom_hline(yintercept = 0.8, color = "purple") +
+  labs(x = "Power",
+       y = "Scale free topology model fit (signed R^2)") +
+  theme_classic()
+
+ggplot(sft.data, aes(x = Power, y = mean.k., label = Power)) +
+  geom_point(size = 0.6) +
+  ggrepel::geom_text_repel(size = 3) +
+  geom_hline(yintercept = 30, color = "pink") +
+  labs(x = "Power", y = "Mean connectivity") +
+  theme_classic()
+```
+
+# WGCNA
+
+## building of network
+
+```{r}
+# make matrix numeric
+norm.counts[] <- sapply(norm.counts, as.numeric)
+#28 -21 modul
+soft_power <- 28
+temp_cor <- cor
+cor <- WGCNA::cor
+
+soft_power <- 28
+
+blockwisenet <- blockwiseModules(
+  norm.counts,
+  maxBlockSize = 15000,
+  TOMType = "signed",
+  networkType = "signed",
+  power = soft_power,
+  mergeCutHeight = 0.25,
+  numericLabels = FALSE,
+  randomSeed = 1234,
+  verbose = 3,
+  corType = "pearson"
+)
+
+```
+
+## moduls presence and eigengene escimating
+
+```{r}
+cor <- temp_cor
+
+#Module Eigengene Infromation
+module_eigengenes <- blockwisenet$MEs
+head(module_eigengenes)
+
+dim(module_eigengenes)
+colnames(module_eigengenes)
+```
+
+## moduls significance
+
+```{r}
+library(limma)
+# model design (биология + batch) 
+design <- model.matrix(~ condition_date + species, data = meta_sub_no_outliers)
+
+# matrix of modules: modules x samples ---
+ME_mat <- t(module_eigengenes)
+
+# check
+stopifnot(nrow(design) == ncol(ME_mat))
+stopifnot(identical(rownames(design), colnames(ME_mat)))
+
+# limma model
+fit <- lmFit(ME_mat, design)
+fit <- eBayes(fit)
+
+# coefficient comparing Human vs Chimp
+coef_name <- grep("^species", colnames(design), value = TRUE)[1]
+coef_name
+
+# results table
+me_stats <- topTable(fit, coef = coef_name, number = Inf, sort.by = "P")
+
+# add module names 
+me_stats$module <- rownames(me_stats)
+
+# leave only important coulumns
+me_stats <- me_stats[, c("module", "logFC", "P.Value", "adj.P.Val")]
+
+# watch top
+head(me_stats, 20)
+```
+
+## moduls filtering according with their significance
+
+```{r}
+
+sig_modules <- me_stats %>%
+  dplyr::filter(adj.P.Val < 0.05)
+
+sig_modules
+```
+
+## module–trait correlation analysis
+
+```{r,fig.height=6, fig.width=10}
+
+traits <- meta_sub_no_outliers
+
+# convert factors to numeric
+traits_num <- data.frame(lapply(traits, function(x) as.numeric(as.factor(x))))
+rownames(traits_num) <- rownames(traits)
+
+moduleTraitCor <- cor(module_eigengenes, traits_num, use = "p")
+
+moduleTraitP <- corPvalueStudent(moduleTraitCor, nSamples = nrow(norm.counts))
+
+labeledHeatmap(
+  Matrix = moduleTraitCor,
+  xLabels = colnames(traits_num),
+  yLabels = colnames(module_eigengenes),
+  ySymbols = colnames(module_eigengenes),
+  colorLabels = FALSE,
+  colors = blueWhiteRed(50),
+  textMatrix = signif(moduleTraitP, 2),
+  main = "Module–trait relationships"
+)
+
+```
+
+## module eigengenes by species
+
+```{r,fig.height=8, fig.width=10}
+#| label: plot-selected-modules
+
+ME_df <- as.data.frame(module_eigengenes)
+ME_df$species <- meta_sub_no_outliers$species
+ME_df$sample  <- rownames(meta_sub_no_outliers)
+
+# only important modules
+selected_colors <- c("black", "pink", "red")
+
+available <- colnames(ME_df)
+
+selected_modules <- unique(c(
+  selected_colors[selected_colors %in% available],
+  paste0("ME", selected_colors)[paste0("ME", selected_colors) %in% available]
+))
+
+if (length(selected_modules) == 0) {
+  stop("Не найдено ни одного выбранного модуля в ME_df. Посмотри colnames(ME_df).")
+}
+
+plot_df <- ME_df %>%
+  dplyr::select(species, dplyr::all_of(selected_modules)) %>%
+  tidyr::pivot_longer(
+    cols = dplyr::all_of(selected_modules),
+    names_to = "module",
+    values_to = "ME"
+  ) %>%
+  dplyr::mutate(module = sub("^ME", "", module))
+
+pal_species <- c("X" = "#1f77b4", "Y" = "#ff7f0e")
+
+ggplot2::ggplot(plot_df, ggplot2::aes(x = species, y = ME, fill = species)) +
+  ggplot2::geom_boxplot(outlier.shape = NA) +
+  ggplot2::geom_jitter(width = 0.15, alpha = 0.7) +
+  ggplot2::facet_wrap(~ module, scales = "free_y") +
+  ggplot2::theme_bw() +
+  ggplot2::labs(
+    title = "Selected module eigengenes by species",
+    x = "",
+    y = "Module eigengene (ME)"
+  ) +
+  ggplot2::scale_fill_manual(values = pal_species)
+```
+
+## HEATMAP
+
+```{r, fig.height=8, fig.width=10}
+library(pheatmap)
+library(AnnotationDbi)
+library(org.Hs.eg.db)
+library(dplyr)
+
+# 1) expression matrix for heatmaps
+# norm.counts = samples x genes
+# pheatmap needs genes x samples
+mat <- t(norm.counts)   # genes x samples
+mat_ens_base <- sub("\\..*$", "", rownames(mat))
+
+# 2) only selected modules
+sig_modules <- c("black", "pink", "red")
+print(sig_modules)
+
+# 3) annotation for samples
+ann <- data.frame(
+  species = meta_sub_no_outliers$species,
+  donor   = meta_sub_no_outliers$condition_chemical,
+  prep    = meta_sub_no_outliers$condition_prep,
+  date    = meta_sub_no_outliers$condition_date,
+  row.names = rownames(meta_sub_no_outliers)
+)
+
+ann <- ann[colnames(mat), , drop = FALSE]
+stopifnot(identical(rownames(ann), colnames(mat)))
+
+# 4) annotation colors
+ann_colors <- list(
+  species = c(
+    X     = "black",
+    Y = "#EDC948"
+  ),
+  prep = c(
+    A = "#274C77",
+    B = "#0B1F3A",
+    none   = "#1F3A5F"
+  ),
+  date = c(
+    "05-24" = "#D8A7B1",
+    "12-24" = "#B07AA1",
+    "03-25" = "#C992A4"
+  ),
+  donor = c(
+    R    = "#9C755F",
+    D   = "#4E342E",
+    G    = "#D9C2A3",
+    L    = "#B08968",
+    K  = "#5D4037",
+    O  = "#C4A484",
+    M = "#EDC948",
+    S = "#8D6E63"
+  )
+)
+
+# 5) heatmap colors
+hm_colors <- colorRampPalette(c("#2b6cb0", "white", "#c53030"))(101)
+
+# 6) module colors from WGCNA
+moduleColors_all <- blockwisenet$colors
+stopifnot(!is.null(names(moduleColors_all)))
+
+# keep common genes only
+common_genes <- intersect(names(moduleColors_all), rownames(mat))
+moduleColors_all <- moduleColors_all[common_genes]
+mat <- mat[common_genes, , drop = FALSE]
+
+stopifnot(identical(names(moduleColors_all), rownames(mat)))
+
+# 7) plot heatmaps for selected modules only
+for (module_color in sig_modules) {
+
+  genes_in_module <- names(moduleColors_all)[moduleColors_all == module_color]
+
+  if (length(genes_in_module) < 5) {
+    message("Skip ", module_color, ": too few genes in module (", length(genes_in_module), ")")
+    next
+  }
+
+  mat_m <- mat[genes_in_module, , drop = FALSE]
+
+  if (nrow(mat_m) < 5) {
+    message("Skip ", module_color, ": too few genes found in matrix (", nrow(mat_m), ")")
+    next
+  }
+
+  mod_ens_base <- sub("\\..*$", "", rownames(mat_m))
+
+  symbols_map <- AnnotationDbi::mapIds(
+    org.Hs.eg.db,
+    keys      = unique(mod_ens_base),
+    column    = "SYMBOL",
+    keytype   = "ENSEMBL",
+    multiVals = "first"
+  )
+
+  # top variable genes in module
+  vars <- apply(mat_m, 1, var, na.rm = TRUE)
+  top_n <- min(20, length(vars))
+  top_genes <- names(sort(vars, decreasing = TRUE))[1:top_n]
+  mat_top <- mat_m[top_genes, , drop = FALSE]
+
+  # rename rows to symbols
+  top_ens_base <- sub("\\..*$", "", rownames(mat_top))
+  sym <- unname(symbols_map[top_ens_base])
+  sym[is.na(sym) | sym == ""] <- top_ens_base[is.na(sym) | sym == ""]
+  rownames(mat_top) <- make.unique(sym)
+
+  # z-score by gene
+  mat_z <- t(scale(t(mat_top)))
+  mat_z[is.na(mat_z)] <- 0
+
+  # order columns by metadata
+  ord <- order(ann$species, ann$date, ann$prep, ann$donor)
+  mat_z_ord <- mat_z[, ord, drop = FALSE]
+  ann_ord   <- ann[ord, , drop = FALSE]
+
+  pheatmap(
+    mat_z_ord,
+    color = hm_colors,
+    breaks = seq(-2.5, 2.5, length.out = 102),
+    annotation_col = ann_ord,
+    annotation_colors = ann_colors,
+    show_colnames = FALSE,
+    show_rownames = TRUE,
+    fontsize_row = 10,
+    border_color = NA,
+    clustering_distance_cols = "correlation",
+    clustering_distance_rows = "correlation",
+    clustering_method = "complete",
+    treeheight_col = 25,
+    treeheight_row = 25,
+    main = paste0(module_color, " module — top variable genes (z-score)"),
+    legend = TRUE
+  )
+}
+```
+
+\
+
+```{r}
+#check GO of the most important modul
+```
+
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+# 1) module colors
+module_colors <- blockwisenet$colors
+names(module_colors) <- colnames(norm.counts)
+
+# 2) genes in red module
+red_genes <- names(module_colors)[module_colors == "red"]
+red_ens <- sub("\\..*$", "", red_genes)
+
+# 3) convert red genes to ENTREZ
+entrez_red <- bitr(
+  red_ens,
+  fromType = "ENSEMBL",
+  toType = c("ENTREZID", "SYMBOL"),
+  OrgDb = org.Hs.eg.db
+)
+
+# 4) background universe = all genes used in WGCNA
+all_genes <- names(module_colors)
+all_ens <- sub("\\..*$", "", all_genes)
+
+universe_df <- bitr(
+  all_ens,
+  fromType = "ENSEMBL",
+  toType = "ENTREZID",
+  OrgDb = org.Hs.eg.db
+)
+
+# 5) GO enrichment
+ego_red <- enrichGO(
+  gene = unique(entrez_red$ENTREZID),
+  universe = unique(universe_df$ENTREZID),
+  OrgDb = org.Hs.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  readable = TRUE
+)
+
+# 6) show results
+head(as.data.frame(ego_red), 10)
+```
