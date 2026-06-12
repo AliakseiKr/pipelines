@@ -1,0 +1,5234 @@
+---
+title: "GO project presentation o Aleksandra"
+author: "Aliaksei Kurachou"
+format: html
+editor: visual
+---
+
+# 1.0 Load libraries
+
+```{r}
+library(data.table)
+library(WGCNA)
+library(DESeq2)
+library(GEOquery)
+library(tidyverse)
+library(CorLevelPlot)
+library(gridExtra)
+```
+
+# 2.0 przygotowanie danych do analizy
+
+## 2.1 wczytywanie nazw samplow
+
+```{r}
+counts_table <- c(
+"RNA_Seq_05.24_HomSap_i.Astro_WT_coculture_P0.RatHPC.GM36_Rep_1_ratNor7",
+"RNA_Seq_05.24_HomSap_i.Astro_WT_coculture_P0.RatHPC.ELE30_Rep_1_ratNor7",
+"RNA_Seq_05.24_PanTro_i.Astro_WT_coculture_P0.RatHPC.Kimby12_Rep_1_ratNor7",
+"RNA_Seq_05.24_PanTro_i.Astro_WT_coculture_P0.RatHPC.Kimby16_Rep_1_ratNor7",
+"RNA_Seq_05.24_PanTro_i.Astro_WT_coculture_P0.RatHPC.Mandy4_Rep_1_ratNor7",
+"RNA_Seq_05.24_PanTro_i.Astro_WT_coculture_P0.RatHPC.Mandy6_Rep_1_ratNor7",
+"RNA_Seq_12.24_HomSap_i.Astro_WT_coculture_GM36_OPprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_HomSap_i.Astro_WT_coculture_GM36_IFprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_HomSap_i.Astro_WT_coculture_ELE30_OPprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_HomSap_i.Astro_WT_coculture_AG93_OPprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_HomSap_i.Astro_WT_coculture_AG93_IFprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_PanTro_i.Astro_WT_coculture_Kimby12_IFprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_PanTro_i.Astro_WT_coculture_Mandy4_OPprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_PanTro_i.Astro_WT_coculture_Mandy4_IFprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_PanTro_i.Astro_WT_coculture_Mandy6_OPprep_Rep_1_ratNor7",
+"RNA_Seq_12.24_PanTro_i.Astro_WT_coculture_Mandy6_IFprep_Rep_1_ratNor7",
+"RNA_Seq_03.25_PanTro_i.Astro_WT_coculture_Rep4_14D_cocultures_Neurons_Mandy04_Rep_1_ratNor7",
+"RNA_Seq_03.25_HomSap_i.Astro_WT_coculture_Rep4_14D_cocultures_Neurons_AG94_Rep_1_ratNor7",
+"RNA_Seq_03.25_PanTro_i.Astro_WT_coculture_Rep4_14D_cocultures_Neurons_Mandy06_Rep_1_ratNor7",
+"RNA_Seq_03.25_HomSap_i.Astro_WT_coculture_Rep4_14D_cocultures_Neurons_AG93_Rep_1_ratNor7",
+"RNA_Seq_03.25_HomSap_i.Astro_WT_coculture_Rep4_14D_cocultures_Neurons_ELE30_Rep_1_ratNor7",
+"RNA_Seq_05.24_RatNor_pn.Neurn_WT_P0.RatHPC.Ctrl_Rep_1_ratNor7",
+"RNA_Seq_12.24_RatNor_pn.Neurn_WT_Rep_2_ratNor7",
+"RNA_Seq_12.24_RatNor_pn.Neurn_WT_OPprep_Rep_1_ratNor7",
+"RNA_Seq_03.25_RatNor_pn.Neurn_WT_Rep4_14D_cocultures_Neurons_alone_FDU_Rep_1_ratNor7"
+)
+sample_names <- counts_table[grepl("HomSap|PanTro", counts_table)]
+
+sample_names
+```
+
+## 2.1 przypisywanie do kategorii
+
+```{r}
+meta <- tibble(sample = sample_names) %>%
+  mutate(
+    species = case_when(
+      grepl("HomSap", sample) ~ "Human",
+      grepl("PanTro", sample) ~ "Chimpanzee",
+      TRUE ~ NA_character_
+    ),
+    condition_chemical = case_when(
+      grepl("AG94", sample) ~ "AG94",
+      grepl("AG93", sample) ~ "AG93",
+      grepl("Mandy0?6", sample) ~ "Mandy6",
+      grepl("Mandy0?4", sample) ~ "Mandy4",
+      grepl("ELE30", sample) ~ "ELE30",
+      grepl("GM36", sample) ~ "GM36",
+      grepl("Kimby12", sample) ~ "Kimby12",
+      grepl("Kimby16", sample) ~ "Kimby16",
+      grepl("SandraA", sample) ~ "SandraA",
+      TRUE ~ NA_character_
+    ),
+    condition_date = case_when(
+      grepl("RNA_Seq_05\\.24", sample) ~ "05.24",
+      grepl("RNA_Seq_12\\.24", sample) ~ "12.24",
+      grepl("RNA_Seq_03\\.25", sample) ~ "03.25",
+      grepl("RNA_Seq_05\\.25", sample) ~ "05.25",
+      grepl("RNA_Seq_01\\.26", sample) ~ "01.26",
+      TRUE ~ NA_character_
+    ),
+    condition_prep = case_when(
+      grepl("IFprep", sample) ~ "IFprep",
+      grepl("OPprep", sample) ~ "OPprep",
+      TRUE ~ "none"
+    ),
+    condition_timepoint = case_when(
+      grepl("P0\\.RatHPC", sample) ~ "P0",
+      grepl("14D_cocultures", sample) ~ "14D",
+      TRUE ~ NA_character_
+    ),
+    condition_rep = case_when(
+      grepl("Rep4", sample) ~ "Rep4",
+      grepl("Rep5", sample) ~ "Rep5",
+      grepl("Rep6", sample) ~ "Rep6",
+      grepl("Rep7", sample) ~ "Rep7",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(
+    species = factor(species),
+    condition_chemical = factor(condition_chemical),
+    condition_date = factor(condition_date),
+    condition_prep = factor(condition_prep),
+    condition_timepoint = factor(condition_timepoint),
+    condition_rep = factor(condition_rep)
+  )
+
+meta <- as.data.frame(meta)
+rownames(meta) <- meta$sample
+meta$sample <- NULL
+
+table(meta$species, useNA = "ifany")
+table(meta$condition_chemical, useNA = "ifany")
+table(meta$condition_date, useNA = "ifany")
+table(meta$condition_prep, useNA = "ifany")
+table(meta$condition_timepoint, useNA = "ifany")
+table(meta$condition_rep, useNA = "ifany")
+
+
+#sprawdzenie confounding faktorow
+table(meta$species, meta$condition_date)
+
+table(meta$species, meta$condition_chemical)
+
+table(meta$condition_date, meta$condition_prep)
+
+table(meta$condition_date, meta$condition_timepoint)
+
+table(meta$species, meta$condition_timepoint)
+
+table(meta$species, meta$condition_prep)
+
+# write.csv(meta, "~/Desktop/meta.csv", row.names = TRUE)
+```
+
+## 2.2 wczytywanie tabeli countow
+
+```{r}
+counts_table <- "/home/aleks/Desktop/Neurons. Human vs Chimpanzee/counts_neurons/ratNor7_gene_counts.txt"
+
+counts <- read.table(counts_table, header = TRUE, sep = "\t", row.names = 1)
+
+```
+
+## 2.3 count data preprocessing
+
+```{r}
+#| echo: true
+#| results: "markup"
+
+# wybieram tylko count-kolumny (после первых 5 аннотационных)
+count_df <- as.data.frame(counts[, -(1:5)])
+
+# tworze macierz 
+count_mat <- as.matrix(count_df)
+storage.mode(count_mat) <- "numeric"
+
+# oczyszczam sample columns в count_mat
+clean_names <- colnames(count_mat)
+clean_names <- sub("^analyses\\.star\\.", "", clean_names)
+clean_names <- sub("_Aligned\\.sortedByCoord\\.out\\.bam$", "", clean_names)
+
+# przepisuje nazwy po czyszczeniu
+colnames(count_mat) <- clean_names
+
+# sample names od count matrix
+count_samples <- colnames(count_mat)
+
+# matching counts and meta samples
+meta_samples <- rownames(meta)
+common <- intersect(colnames(count_mat), meta_samples)
+cat("Samples in meta:", length(meta_samples), "\n")
+cat("Samples in count_mat:", ncol(count_mat), "\n")
+cat("Common samples:", length(common), "\n")
+
+# subset oraz uporzadkowanie
+count_mat_sub <- count_mat[, common, drop = FALSE]
+meta_sub <- meta[common, , drop = FALSE]
+
+stopifnot(identical(colnames(count_mat_sub), rownames(meta_sub)))
+
+```
+
+## 3.3 outliers expel
+
+```{r}
+# samples to remove(wlasnie nic nie wykluczylem wiec zostaje mi pusty wektor zas niech zostaje bo na nic nie wplywa oraz nie trzeba przepisywac rzeczy w kodzie jakie z ta zmienna juz sa zwiazane)
+
+samples.to.be.excluded <- c(
+)
+
+# 1) remove samples from counts
+count_mat_sub_no_outliers <- count_mat_sub[
+  , !(colnames(count_mat_sub) %in% samples.to.be.excluded),
+  drop = FALSE
+]
+
+# 2) remove samples from metadata
+meta_sub_no_outliers <- meta_sub[
+  !(rownames(meta_sub) %in% samples.to.be.excluded),
+  , drop = FALSE
+]
+
+# 3) sanity check
+stopifnot(identical(colnames(count_mat_sub_no_outliers),
+                    rownames(meta_sub_no_outliers)))
+
+# 4) check that they were removed
+if (!any(samples.to.be.excluded %in% colnames(count_mat_sub_no_outliers))) {
+  print("All outliers successfully removed")
+}
+
+# show remaining samples
+colnames(count_mat_sub_no_outliers)
+```
+
+# 4.0 group samples according to their special affiliation
+
+```{r}
+cn <- colnames(count_mat_sub_no_outliers)
+
+human_group <- grepl("HomSap", cn)
+chimpanzee_group <- grepl("PanTro", cn)
+
+keep_by_name <- human_group | chimpanzee_group
+samples_by_name <- cn[keep_by_name]
+
+group_sub <- ifelse(
+  human_group[keep_by_name],
+  "Rat_neurons_human_coculture",
+  "Rat_neurons_chimp_coculture"
+)
+
+group_sub <- factor(
+  group_sub,
+  levels = c("Rat_neurons_human_coculture", "Rat_neurons_chimp_coculture")
+)
+
+table(group_sub)
+
+# res_human_vs_chimp[rownames(res_human_vs_chimp)==gene_id,]
+```
+
+## 4.1 wizualizacja samplow przedzielonych do pewnej kategorii
+
+```{r}
+table(meta_sub_no_outliers$species, meta_sub_no_outliers$condition_date)
+table(meta_sub_no_outliers$species, meta_sub_no_outliers$condition_prep)
+table(meta_sub_no_outliers$species, meta_sub_no_outliers$condition_chemical)
+```
+
+# 5.0 Run DESeq2
+
+```{r}
+library(DESeq2)
+
+meta_sub_no_outliers$species <- droplevels(meta_sub_no_outliers$species)
+meta_sub_no_outliers$condition_date <- droplevels(meta_sub_no_outliers$condition_date)
+
+meta_sub_no_outliers$species <- relevel(meta_sub_no_outliers$species, ref = "Chimpanzee")
+nrow(count_mat_sub_no_outliers)
+human_vs_chimp <- DESeqDataSetFromMatrix(
+  countData = round(count_mat_sub_no_outliers),
+  colData   = meta_sub_no_outliers,
+  design    = ~ condition_date + species
+)
+
+human_vs_chimp <- DESeq(human_vs_chimp, fitType = 'local')
+
+res <- results(human_vs_chimp)
+
+# keep only genes used for testing
+res_filtered <- res[!is.na(res$padj), ]
+
+
+# logical vector of genes to keep
+keep_genes <- !is.na(res$padj)
+
+# subset DESeqDataSet properly
+human_vs_chimp <- human_vs_chimp[keep_genes, ]
+
+human_vs_chimp_counts <- counts(human_vs_chimp, normalized = TRUE)
+human_vs_chimp_vsn <- vst(human_vs_chimp, blind = FALSE)
+human_vs_chimp_vsn_counts <- assay(human_vs_chimp_vsn)
+
+# write.csv(human_vs_chimp_vsn_counts, "~/Desktop/expression.csv")
+
+res_human_vs_chimp <- results(
+  human_vs_chimp,
+  contrast = c("species", "Human", "Chimpanzee")
+)
+
+nrow(human_vs_chimp)
+
+
+#Prepare Data for GO enrichment(Separate from previous step with wgcna)
+down_genes <- rownames(res_human_vs_chimp)[
+  !is.na(res_human_vs_chimp$padj) &
+  res_human_vs_chimp$log2FoldChange < -0.59 &
+  res_human_vs_chimp$padj < 0.1
+]
+
+up_genes <- rownames(res_human_vs_chimp)[
+  !is.na(res_human_vs_chimp$padj) &
+  res_human_vs_chimp$log2FoldChange > 0.59 &
+  res_human_vs_chimp$padj < 0.1
+]
+
+
+
+# keep only genes present in filtered VST matrix
+down_genes_filt <- intersect(down_genes, colnames(human_vs_chimp_vsn_counts))
+up_genes_filt   <- intersect(up_genes, colnames(human_vs_chimp_vsn_counts))
+
+# subset normalized matrix
+norm.down <- human_vs_chimp_vsn_counts[, down_genes_filt, drop = FALSE]
+norm.up   <- human_vs_chimp_vsn_counts[, up_genes_filt, drop = FALSE]
+
+
+
+length(down_genes)
+length(up_genes)
+```
+
+#Возможно можно сразу начать с этого
+
+## Loading Autoencoder results
+
+```{r}
+latent <- read.csv("~/Desktop/latent_space.csv", row.names = 1)
+
+dim(latent)
+head(latent)
+
+str(latent)
+summary(latent)
+```
+
+```{r}
+#ТУТ МОЖНО ПОСМОТРЕТЬ ТОП СКОРРЕЛИРОВАННЫХ ГЕНОВ С КАИМ_ТО ГЕНОМ НАС ИНТЕРЕСУЮЩИМ, НО НИЖНИЙ ЧАНК БЕЗ НЕГО НЕ РАБОТЕТ
+
+get_top_neighbors_latent <- function(target_gene,
+                                     latent,
+                                     n = 50,
+                                     min_similarity = NULL) {
+
+  if (!(target_gene %in% rownames(latent))) {
+    warning(paste(target_gene, "not found in latent"))
+    return(NULL)
+  }
+
+  candidate_genes <- rownames(latent)
+  candidate_genes <- candidate_genes[
+    candidate_genes != target_gene
+  ]
+
+  target_vec <- as.numeric(
+    latent[target_gene, ]
+  )
+
+  cosine_vec <- apply(
+    latent[candidate_genes, , drop = FALSE],
+    1,
+    function(x) {
+      x <- as.numeric(x)
+      sum(target_vec * x) /
+        (sqrt(sum(target_vec^2)) * sqrt(sum(x^2)))
+    }
+  )
+
+  cosine_vec <- cosine_vec[!is.na(cosine_vec)]
+
+  if (!is.null(min_similarity)) {
+    cosine_vec <- cosine_vec[
+      cosine_vec >= min_similarity
+    ]
+  }
+
+  top_neighbors <- sort(
+    cosine_vec,
+    decreasing = TRUE
+  )[1:min(n, length(cosine_vec))]
+
+  data.frame(
+    target_gene = target_gene,
+    neighbor_gene = names(top_neighbors),
+    latent_similarity = as.numeric(top_neighbors)
+  )
+}
+```
+
+## Top neighboors latent symbol
+
+```{r}
+library(dplyr)
+
+# 1. Top 500 DESeq genes
+top500_deseq_genes <- as.data.frame(res_filtered) |>
+  tibble::rownames_to_column("gene") |>
+  dplyr::filter(!is.na(padj), !is.na(log2FoldChange)) |>
+  dplyr::arrange(
+    padj,
+    dplyr::desc(abs(log2FoldChange))
+  ) |>
+  dplyr::slice_head(n = 500) |>
+  dplyr::pull(gene)
+
+# 2. Keep only genes present in latent space
+top500_deseq_genes <- top500_deseq_genes[
+  top500_deseq_genes %in% rownames(latent)
+]
+
+# 3. For each top DESeq gene, find top 20 latent-space neighbors
+latent_neighbors_top500_deseq <- lapply(
+  top500_deseq_genes,
+  function(g) {
+    get_top_neighbors_latent(
+      target_gene = g,
+      latent = latent,
+      n = 20,
+      min_similarity = 0.85
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+# View(latent_neighbors_top500_deseq)
+```
+
+```{r}
+## Top neighboors latent symbol
+library(dplyr)
+
+# 1. Choose top 500 most variable genes from latent space
+gene_variability <- data.frame(
+  gene = rownames(latent),
+  variance = apply(latent, 1, var, na.rm = TRUE)
+) |>
+  dplyr::arrange(dplyr::desc(variance))
+
+top500_variable_genes <- gene_variability |>
+  dplyr::slice_head(n = 500) |>
+  dplyr::pull(gene)
+
+# 2. For each of top 500 genes, find top 20 latent-space neighbors
+latent_neighbors_top500 <- lapply(
+  top500_variable_genes,
+  function(g) {
+    get_top_neighbors_latent(
+      target_gene = g,
+      latent = latent,
+      n = 20,
+      min_similarity = 0.85
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+# View(latent_neighbors_top500)
+
+
+# 1. Genes of interest from selected GO/GSEA processes
+# key_genes <- top_genes_selected_processes |>
+#   dplyr::pull(gene) |>
+#   unique()
+```
+
+## ENSEMBL IDs to gene symbols
+
+```{r}
+library(clusterProfiler)
+library(org.Rn.eg.db)
+library(dplyr)
+
+network_table <- latent_neighbors_top500
+
+network_table <- network_table |>
+  dplyr::select(-dplyr::any_of("neighbor_symbol"))
+
+neighbor_map <- clusterProfiler::bitr(
+  unique(network_table$neighbor_gene),
+  fromType = "ENSEMBL",
+  toType = "SYMBOL",
+  OrgDb = org.Rn.eg.db
+) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
+
+network_table <- network_table |>
+  dplyr::left_join(
+    neighbor_map,
+    by = c("neighbor_gene" = "ENSEMBL")
+  ) |>
+  dplyr::rename(
+    neighbor_symbol = SYMBOL
+  )
+
+head(network_table)
+colnames(network_table)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(igraph)
+library(plotly)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+
+# 1. Network table from top-variable latent neighbors
+network_table <- latent_neighbors_top500
+
+# 2. All graph genes
+all_graph_genes <- unique(c(
+  network_table$target_gene,
+  network_table$neighbor_gene
+))
+
+all_graph_genes_clean <- gsub("\\..*", "", all_graph_genes)
+
+# 3. Map ENSRNOG -> ENTREZ + SYMBOL
+gene_map <- clusterProfiler::bitr(
+  all_graph_genes_clean,
+  fromType = "ENSEMBL",
+  toType = c("ENTREZID", "SYMBOL"),
+  OrgDb = org.Rn.eg.db
+) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
+
+# 4. GO enrichment for all graph genes
+go_graph <- enrichGO(
+  gene = unique(gene_map$ENTREZID),
+  OrgDb = org.Rn.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05,
+  readable = FALSE
+)
+
+go_graph_df <- as.data.frame(go_graph)
+
+# 5. Assign one top GO process to each gene
+gene_GO_annotation <- go_graph_df |>
+  dplyr::select(
+    GO_process = Description,
+    GO_padj = p.adjust,
+    geneID
+  ) |>
+  tidyr::separate_rows(geneID, sep = "/") |>
+  dplyr::rename(ENTREZID = geneID) |>
+  dplyr::left_join(gene_map, by = "ENTREZID") |>
+  dplyr::arrange(GO_padj) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE) |>
+  dplyr::rename(
+    gene = ENSEMBL,
+    gene_symbol = SYMBOL
+  )
+
+#6. Edges
+edges <- network_table |>
+  dplyr::select(
+    from = target_gene,
+    to = neighbor_gene,
+    weight = latent_similarity
+  ) |>
+  dplyr::distinct()
+
+# 7. Nodes
+nodes <- data.frame(
+  gene = unique(c(edges$from, edges$to))
+) |>
+  dplyr::left_join(
+    gene_GO_annotation |>
+      dplyr::select(gene, GO_process, gene_symbol),
+    by = "gene"
+  ) |>
+  dplyr::mutate(
+    GO_process = ifelse(is.na(GO_process), "No_GO_enrichment", GO_process),
+    gene_symbol = ifelse(is.na(gene_symbol), gene, gene_symbol)
+  )
+
+print(table(nodes$GO_process))
+
+# 8. Group genes spatially by GO process
+set.seed(123)
+
+go_groups <- unique(nodes$GO_process)
+
+go_centers <- data.frame(
+  GO_process = go_groups,
+  center_x = rnorm(length(go_groups), mean = 0, sd = 8),
+  center_y = rnorm(length(go_groups), mean = 0, sd = 8),
+  center_z = rnorm(length(go_groups), mean = 0, sd = 8)
+)
+
+nodes_plot <- nodes |>
+  dplyr::left_join(go_centers, by = "GO_process") |>
+  dplyr::group_by(GO_process) |>
+  dplyr::mutate(
+    x = center_x + rnorm(dplyr::n(), 0, 1.2),
+    y = center_y + rnorm(dplyr::n(), 0, 1.2),
+    z = center_z + rnorm(dplyr::n(), 0, 1.2)
+  ) |>
+  dplyr::ungroup()
+
+# 9. Edge coordinates
+edge_coords <- edges |>
+  dplyr::left_join(
+    nodes_plot,
+    by = c("from" = "gene")
+  ) |>
+  dplyr::rename(
+    x_from = x,
+    y_from = y,
+    z_from = z,
+    GO_from = GO_process
+  ) |>
+  dplyr::left_join(
+    nodes_plot,
+    by = c("to" = "gene")
+  ) |>
+  dplyr::rename(
+    x_to = x,
+    y_to = y,
+    z_to = z,
+    GO_to = GO_process
+  )
+
+# GO cluster-to-cluster connections
+
+#посмотреть доступные GO кластеры
+# sort(unique(c(cluster_links$cluster_A, cluster_links$cluster_B)))
+
+# GO cluster-to-cluster connections
+cluster_links <- edge_coords |>
+  dplyr::filter(!is.na(GO_from), !is.na(GO_to)) |>
+  dplyr::mutate(
+    cluster_A = pmin(GO_from, GO_to),
+    cluster_B = pmax(GO_from, GO_to),
+    cluster_pair = paste(cluster_A, cluster_B, sep = " <-> ")
+  ) |>
+  dplyr::group_by(cluster_A, cluster_B, cluster_pair) |>
+  dplyr::summarise(
+    n_edges = dplyr::n(),
+    mean_similarity = mean(weight, na.rm = TRUE),
+    max_similarity = max(weight, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(n_edges),
+    dplyr::desc(mean_similarity)
+  )
+
+# View(cluster_links)
+```
+
+## Так выглядит корелляция генов многих GO enrichments сразу со многими другими GO
+
+```{r}
+#ПОКА ЧТО ВЫКЛЮЧУ ПОТОМУ ЧТО R НЕ ПАШЕТ, ВЫРУБАЕТ СЕССИЮ ИЗ-ЗА НЕ ХВАТКИ ПАМЯТИ
+library(dplyr)
+library(visNetwork)
+
+# Use GO-clustered nodes from previous working 3D layout
+vis_nodes <- nodes_plot |>
+  dplyr::mutate(
+    id = gene,
+    label = gene,
+    group = GO_process,
+    title = paste0(
+      "Gene: ", gene,
+      "<br>GO process: ", GO_process
+    ),
+    x = x * 100,
+    y = y * 100
+  ) |>
+  dplyr::select(id, label, group, title, x, y)
+
+# Use existing edges
+vis_edges <- edges |>
+  dplyr::mutate(
+    title = paste0("Similarity: ", round(weight, 3)),
+    color = "black",
+    width = 1
+  ) |>
+  dplyr::select(from, to, title, color, width)
+
+visNetwork(vis_nodes, vis_edges, height = "850px", width = "100%") |>
+  visOptions(
+    highlightNearest = TRUE,
+    selectedBy = "group"
+  ) |>
+  visEdges(
+    color = list(color = "black"),
+    smooth = FALSE
+  ) |>
+  visPhysics(
+    enabled = FALSE
+  ) |>
+  visInteraction(
+    navigationButtons = TRUE,
+    zoomView = TRUE,
+    dragNodes = TRUE
+  )
+
+
+```
+
+## Посмотреть с какими GO в наибольшей степеени коррелирует тот или иной GO по количеству нитей
+
+```{r}
+#ВОЗМОЖНО ЭТОТ ЧАНК НУЖЕН ДЛЯ ЗАПУСКА НИЗ-ИДУЩЕГО, ЕСЛИ НЕТ _ УДАЛИ
+
+latent_mat <- as.matrix(latent)
+
+# normalize rows for cosine similarity
+latent_norm <- latent_mat / sqrt(rowSums(latent_mat^2))
+
+# cosine similarity matrix
+sim_mat <- latent_norm %*% t(latent_norm)
+
+diag(sim_mat) <- NA
+
+top_n <- 5
+min_similarity <- 0.9
+
+edges_all <- lapply(
+  seq_len(nrow(sim_mat)),
+  function(i) {
+    sims <- sim_mat[i, ]
+    sims <- sims[!is.na(sims)]
+    sims <- sims[sims >= min_similarity]
+    
+    if (length(sims) == 0) return(NULL)
+    
+    top_sims <- sort(sims, decreasing = TRUE)[1:min(top_n, length(sims))]
+    
+    data.frame(
+      from = rownames(sim_mat)[i],
+      to = names(top_sims),
+      weight = as.numeric(top_sims)
+    )
+  }
+) |>
+  dplyr::bind_rows()
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(visNetwork)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+
+# ============================================================
+# Selected GO-centered latent neighbor network
+# ============================================================
+
+selected_GO <- "actin filament organization"
+
+top_selected_genes <- 100
+top_neighbors_per_gene <- 100
+min_similarity <- 0.85
+drop_no_go <- TRUE
+
+# 1. Take genes belonging to selected GO process
+selected_GO_genes <- nodes_plot |>
+  dplyr::filter(GO_process == selected_GO) |>
+  dplyr::pull(gene) |>
+  unique()
+
+selected_GO_genes <- intersect(selected_GO_genes, rownames(latent))
+selected_GO_genes <- head(selected_GO_genes, top_selected_genes)
+
+# 2. Get top latent-space neighbors for each selected GO gene
+selected_GO_neighbors <- lapply(
+  selected_GO_genes,
+  function(g) {
+    get_top_neighbors_latent(
+      target_gene = g,
+      latent = latent,
+      n = top_neighbors_per_gene,
+      min_similarity = min_similarity
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+# 3. Build edges
+edges_selected_GO <- selected_GO_neighbors |>
+  dplyr::select(
+    from = target_gene,
+    to = neighbor_gene,
+    weight = latent_similarity
+  ) |>
+  dplyr::distinct()
+
+# 4. Genes included in graph
+graph_genes <- unique(c(
+  edges_selected_GO$from,
+  edges_selected_GO$to
+))
+
+graph_genes_clean <- gsub("\\..*", "", graph_genes)
+
+# 5. Map genes to Entrez/Symbol
+gene_map <- clusterProfiler::bitr(
+  graph_genes_clean,
+  fromType = "ENSEMBL",
+  toType = c("ENTREZID", "SYMBOL"),
+  OrgDb = org.Rn.eg.db
+) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
+
+# 6. GO enrichment for graph genes
+go_graph <- enrichGO(
+  gene = unique(gene_map$ENTREZID),
+  OrgDb = org.Rn.eg.db,
+  keyType = "ENTREZID",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05,
+  readable = FALSE
+)
+
+go_graph_df <- as.data.frame(go_graph)
+
+# 7. Assign one strongest GO process to each gene
+gene_GO_annotation <- go_graph_df |>
+  dplyr::select(
+    GO_process = Description,
+    GO_padj = p.adjust,
+    geneID
+  ) |>
+  tidyr::separate_rows(geneID, sep = "/") |>
+  dplyr::rename(ENTREZID = geneID) |>
+  dplyr::left_join(gene_map, by = "ENTREZID") |>
+  dplyr::arrange(GO_padj) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE) |>
+  dplyr::rename(
+    gene = ENSEMBL,
+    gene_symbol = SYMBOL
+  )
+
+# 8. Create nodes
+nodes_selected_GO <- data.frame(gene = graph_genes) |>
+  dplyr::left_join(
+    gene_GO_annotation |>
+      dplyr::select(gene, GO_process, gene_symbol),
+    by = "gene"
+  ) |>
+  dplyr::mutate(
+    GO_process = ifelse(is.na(GO_process), "No_GO_enrichment", GO_process),
+    gene_symbol = ifelse(is.na(gene_symbol), gene, gene_symbol),
+    node_type = ifelse(gene %in% selected_GO_genes, "selected_GO_gene", "neighbor_gene"),
+    GO_process = ifelse(node_type == "selected_GO_gene", selected_GO, GO_process)
+  )
+
+# 9. Optionally remove No_GO_enrichment neighbor genes
+if (drop_no_go) {
+  keep_genes <- nodes_selected_GO |>
+    dplyr::filter(GO_process != "No_GO_enrichment" | node_type == "selected_GO_gene") |>
+    dplyr::pull(gene)
+
+  nodes_selected_GO <- nodes_selected_GO |>
+    dplyr::filter(gene %in% keep_genes)
+
+  edges_selected_GO <- edges_selected_GO |>
+    dplyr::filter(from %in% keep_genes, to %in% keep_genes)
+}
+
+# 10. Keep only connected nodes
+connected_genes <- unique(c(edges_selected_GO$from, edges_selected_GO$to))
+
+nodes_selected_GO <- nodes_selected_GO |>
+  dplyr::filter(gene %in% connected_genes)
+
+# 11. Spatial layout:
+# selected GO in center, other GO processes around it
+set.seed(123)
+
+other_GO <- setdiff(unique(nodes_selected_GO$GO_process), selected_GO)
+
+angle <- seq(0, 2 * pi, length.out = length(other_GO) + 1)[-1]
+radius <- 900
+
+go_centers <- dplyr::bind_rows(
+  data.frame(
+    GO_process = selected_GO,
+    center_x = 0,
+    center_y = 0
+  ),
+  data.frame(
+    GO_process = other_GO,
+    center_x = radius * cos(angle),
+    center_y = radius * sin(angle)
+  )
+)
+
+nodes_for_plot <- nodes_selected_GO |>
+  dplyr::left_join(go_centers, by = "GO_process") |>
+  dplyr::group_by(GO_process) |>
+  dplyr::mutate(
+    x = center_x + rnorm(
+      dplyr::n(),
+      0,
+      ifelse(GO_process == selected_GO, 170, 90)
+    ),
+    y = center_y + rnorm(
+      dplyr::n(),
+      0,
+      ifelse(GO_process == selected_GO, 170, 90)
+    )
+  ) |>
+  dplyr::ungroup()
+
+# 12. visNetwork nodes
+vis_nodes <- nodes_for_plot |>
+  dplyr::mutate(
+    id = gene,
+    label = gene_symbol,
+    group = GO_process,
+    value = ifelse(node_type == "selected_GO_gene", 22, 12),
+    title = paste0(
+      "Gene ID: ", gene,
+      "<br>Symbol: ", gene_symbol,
+      "<br>GO process: ", GO_process,
+      "<br>Node type: ", node_type
+    )
+  ) |>
+  dplyr::select(id, label, group, value, title, x, y)
+
+# 13. visNetwork edges
+vis_edges <- edges_selected_GO |>
+  dplyr::mutate(
+    title = paste0("Latent similarity: ", round(weight, 3)),
+    color = "black",
+    width = 1
+  ) |>
+  dplyr::select(from, to, title, color, width)
+```
+
+```{r,fig.height=20, fig.width=20}
+#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
+
+# library(dplyr)
+# library(ggplot2)
+# library(ggrepel)
+# library(RColorBrewer)
+# 
+# selected_GO <- "actin filament organization"
+# 
+# # 1. Colors
+# go_levels <- unique(nodes_for_plot$GO_process)
+# 
+# palette_colors <- colorRampPalette(
+#   RColorBrewer::brewer.pal(12, "Set3")
+# )(length(go_levels))
+# 
+# names(palette_colors) <- go_levels
+# palette_colors[selected_GO] <- "#E41A1C"
+# 
+# # 2. Edges
+# edges_plot <- edges_selected_GO |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("from" = "gene")
+#   ) |>
+#   dplyr::rename(x_from = x, y_from = y) |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("to" = "gene")
+#   ) |>
+#   dplyr::rename(x_to = x, y_to = y) |>
+#   dplyr::filter(
+#     !is.na(x_from),
+#     !is.na(y_from),
+#     !is.na(x_to),
+#     !is.na(y_to)
+#   )
+# 
+# # 3. Nodes
+# nodes_for_plot_sized <- nodes_for_plot |>
+#   dplyr::mutate(
+#     node_size = ifelse(node_type == "selected_GO_gene", 4.5, 2.2)
+#   )
+# 
+# # 4. GO cluster labels
+# cluster_labels <- nodes_for_plot_sized |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::summarise(
+#     label_x = mean(x, na.rm = TRUE),
+#     label_y = max(y, na.rm = TRUE) + 120,
+#     n_genes = dplyr::n(),
+#     .groups = "drop"
+#   )
+# 
+# # 5. Selected central gene labels only
+# selected_gene_labels <- nodes_for_plot_sized |>
+#   dplyr::filter(
+#     GO_process == selected_GO,
+#     node_type == "selected_GO_gene"
+#   ) |>
+#   dplyr::slice_head(n = 25)
+# 
+# # 6. Plot
+# p_static <- ggplot() +
+# 
+#   geom_segment(
+#     data = edges_plot,
+#     aes(
+#       x = x_from,
+#       y = y_from,
+#       xend = x_to,
+#       yend = y_to
+#     ),
+#     color = "grey35",
+#     linewidth = 0.25,
+#     alpha = 0.35
+#   ) +
+# 
+#   geom_point(
+#     data = nodes_for_plot_sized,
+#     aes(
+#       x = x,
+#       y = y,
+#       fill = GO_process
+#     ),
+#     size = nodes_for_plot_sized$node_size,
+#     shape = 21,
+#     color = "white",
+#     stroke = 0.25,
+#     alpha = 0.95,
+#     show.legend = FALSE
+#   ) +
+# 
+#   # central gene labels
+#   ggrepel::geom_text_repel(
+#     data = selected_gene_labels,
+#     aes(
+#       x = x,
+#       y = y,
+#       label = gene_symbol
+#     ),
+#     size = 3,
+#     max.overlaps = 50,
+#     box.padding = 0.35,
+#     point.padding = 0.25,
+#     segment.color = "grey55",
+#     color = "black"
+#   ) +
+# 
+#   # GO cluster labels
+#   geom_text(
+#     data = cluster_labels,
+#     aes(
+#       x = label_x,
+#       y = label_y,
+#       label = paste0(GO_process, "\n", n_genes, " genes")
+#     ),
+#     size = 3.2,
+#     fontface = "bold",
+#     color = "black",
+#     lineheight = 0.9
+#   ) +
+# 
+#   scale_fill_manual(values = palette_colors) +
+#   coord_equal() +
+#   theme_void() +
+#   theme(
+#     legend.position = "none",
+#     plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+#     plot.subtitle = element_text(size = 11, hjust = 0.5, color = "grey30"),
+#     plot.margin = margin(10, 10, 10, 10)
+#   ) +
+#   labs(
+#     title = paste0("GO-centered latent network: ", selected_GO),
+#     subtitle = "Nodes are genes; edges are latent-space similarities"
+#   )
+# 
+# p_static
+```
+
+```{r}
+#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
+
+
+# library(dplyr)
+# library(plotly)
+# 
+# # ============================================================
+# # Shared 3D GO-core interaction network
+# # Core GO enrichments = main hubs
+# # Connected GO enrichments = shared/non-duplicated nodes
+# # Connected nodes are scattered around their linked core GO(s)
+# # ============================================================
+# 
+# selected_GOs <- c(
+#   "actin filament organization",
+#   "actomyosin structure organization",
+#   "actomyosin structure organization"
+# )
+# 
+# # 1. Keep only links involving selected core GO enrichments
+# core_links <- cluster_links |>
+#   dplyr::filter(
+#     cluster_A %in% selected_GOs | cluster_B %in% selected_GOs
+#   ) |>
+#   dplyr::mutate(
+#     core_GO = ifelse(
+#       cluster_A %in% selected_GOs,
+#       cluster_A,
+#       cluster_B
+#     ),
+#     connected_GO = ifelse(
+#       cluster_A %in% selected_GOs,
+#       cluster_B,
+#       cluster_A
+#     )
+#   ) |>
+#   dplyr::filter(core_GO != connected_GO)
+# 
+# print(table(core_links$core_GO))
+# 
+# # 2. Core GO nodes
+# n_core <- length(selected_GOs)
+# 
+# core_nodes <- data.frame(
+#   GO_process = selected_GOs,
+#   node_type = "core",
+#   x = 700 * cos(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   y = 700 * sin(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   z = 0
+# )
+# 
+# # 3. Connected GO nodes: unique, shared, scattered in 3D
+# set.seed(123)
+# 
+# connected_nodes <- core_links |>
+#   dplyr::group_by(connected_GO) |>
+#   dplyr::summarise(
+#     linked_cores = paste(unique(core_GO), collapse = " | "),
+#     n_linked_cores = dplyr::n_distinct(core_GO),
+#     total_edges = sum(n_edges, na.rm = TRUE),
+#     mean_similarity = mean(mean_similarity, na.rm = TRUE),
+#     max_similarity = max(max_similarity, na.rm = TRUE),
+#     .groups = "drop"
+#   ) |>
+#   dplyr::rowwise() |>
+#   dplyr::mutate(
+#     base_x = mean(core_nodes$x[
+#       core_nodes$GO_process %in% unlist(strsplit(linked_cores, " \\| "))
+#     ]),
+#     base_y = mean(core_nodes$y[
+#       core_nodes$GO_process %in% unlist(strsplit(linked_cores, " \\| "))
+#     ]),
+#     base_z = mean(core_nodes$z[
+#       core_nodes$GO_process %in% unlist(strsplit(linked_cores, " \\| "))
+#     ]),
+#     spread = 350 + 35 * sqrt(total_edges),
+#     x = base_x + rnorm(1, mean = 0, sd = spread),
+#     y = base_y + rnorm(1, mean = 0, sd = spread),
+#     z = base_z + rnorm(1, mean = 120 * n_linked_cores, sd = spread / 2),
+#     GO_process = connected_GO,
+#     node_type = "connected"
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::select(
+#     GO_process,
+#     node_type,
+#     x,
+#     y,
+#     z,
+#     linked_cores,
+#     n_linked_cores,
+#     total_edges,
+#     mean_similarity,
+#     max_similarity
+#   )
+# 
+# # 4. Combine nodes
+# go_nodes <- dplyr::bind_rows(
+#   core_nodes |>
+#     dplyr::mutate(
+#       linked_cores = GO_process,
+#       n_linked_cores = NA_integer_,
+#       total_edges = NA_real_,
+#       mean_similarity = NA_real_,
+#       max_similarity = NA_real_
+#     ),
+#   connected_nodes
+# )
+# 
+# # 5. Edge coordinates
+# go_edges <- core_links |>
+#   dplyr::left_join(
+#     core_nodes |>
+#       dplyr::select(
+#         core_GO = GO_process,
+#         x_core = x,
+#         y_core = y,
+#         z_core = z
+#       ),
+#     by = "core_GO"
+#   ) |>
+#   dplyr::left_join(
+#     connected_nodes |>
+#       dplyr::select(
+#         connected_GO = GO_process,
+#         x_conn = x,
+#         y_conn = y,
+#         z_conn = z
+#       ),
+#     by = "connected_GO"
+#   )
+# 
+# # 6. Plot
+# p <- plotly::plot_ly()
+# 
+# # Edges
+# for (i in seq_len(nrow(go_edges))) {
+#   p <- p |>
+#     plotly::add_trace(
+#       x = c(go_edges$x_core[i], go_edges$x_conn[i]),
+#       y = c(go_edges$y_core[i], go_edges$y_conn[i]),
+#       z = c(go_edges$z_core[i], go_edges$z_conn[i]),
+#       type = "scatter3d",
+#       mode = "lines",
+#       line = list(
+#         width = max(1, min(8, go_edges$n_edges[i] / 5)),
+#         color = "rgba(0,0,0,0.45)"
+#       ),
+#       showlegend = FALSE,
+#       hoverinfo = "none"
+#     )
+# }
+# 
+# # Core GO nodes
+# p <- p |>
+#   plotly::add_trace(
+#     data = go_nodes |> dplyr::filter(node_type == "core"),
+#     x = ~x,
+#     y = ~y,
+#     z = ~z,
+#     type = "scatter3d",
+#     mode = "markers+text",
+#     text = ~GO_process,
+#     textposition = "top center",
+#     marker = list(
+#       size = 16,
+#       symbol = "diamond"
+#     ),
+#     hoverinfo = "text",
+#     hovertext = ~paste0(
+#       "CORE GO: ", GO_process
+#     ),
+#     showlegend = FALSE
+#   )
+# 
+# # Connected GO nodes
+# p <- p |>
+#   plotly::add_trace(
+#     data = go_nodes |> dplyr::filter(node_type == "connected"),
+#     x = ~x,
+#     y = ~y,
+#     z = ~z,
+#     type = "scatter3d",
+#     mode = "markers",
+#     marker = list(
+#       size = ~pmin(16, 5 + sqrt(total_edges))
+#     ),
+#     color = ~linked_cores,
+#     hoverinfo = "text",
+#     text = ~paste0(
+#       "Connected GO: ", GO_process,
+#       "<br>Linked core GO(s): ", linked_cores,
+#       "<br>Number of linked cores: ", n_linked_cores,
+#       "<br>Total gene-gene edges: ", total_edges,
+#       "<br>Mean similarity: ", round(mean_similarity, 3),
+#       "<br>Max similarity: ", round(max_similarity, 3)
+#     ),
+#     showlegend = FALSE
+#   ) |>
+#   plotly::layout(
+#     title = "Shared 3D GO-core interaction network",
+#     showlegend = FALSE,
+#     scene = list(
+#       xaxis = list(title = "", showticklabels = FALSE),
+#       yaxis = list(title = "", showticklabels = FALSE),
+#       zaxis = list(title = "", showticklabels = FALSE)
+#     ),
+#     margin = list(l = 0, r = 0, b = 0, t = 40)
+#   )
+# 
+# p
+```
+
+# 3D GO-gene network with shared core genes
+
+#Без этого чанка не хочет запускаться следующий основной
+
+```{r,fig.height=20, fig.width=20}
+#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
+
+# #wyposazona kopalnia
+# library(dplyr)
+# library(plotly)
+# 
+# # ============================================================
+# # Hybrid 3D GO-gene network with colored GO region shells
+# # ============================================================
+# 
+# selected_GOs <- c(
+#   "actin filament organization",
+#   "actomyosin structure organization",
+#   "actomyosin structure organization"
+# )
+# 
+# top_selected_genes <- 100
+# top_neighbors_per_gene <- 100
+# min_similarity <- 0.85
+# drop_no_go <- TRUE
+# 
+# # 1. Core GO genes
+# core_gene_nodes <- nodes_plot |>
+#   dplyr::filter(GO_process %in% selected_GOs) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::slice_head(n = top_selected_genes) |>
+#   dplyr::ungroup()
+# 
+# core_genes <- unique(core_gene_nodes$gene)
+# 
+# # 2. Gene-gene edges from core GO genes to correlated genes
+# selected_edges_gene <- edges |>
+#   dplyr::filter(from %in% core_genes | to %in% core_genes) |>
+#   dplyr::filter(weight >= min_similarity) |>
+#   dplyr::group_by(from) |>
+#   dplyr::slice_head(n = top_neighbors_per_gene) |>
+#   dplyr::ungroup()
+# 
+# # 3. All genes involved
+# selected_gene_ids <- unique(c(
+#   selected_edges_gene$from,
+#   selected_edges_gene$to,
+#   core_genes
+# ))
+# 
+# gene_nodes <- nodes_plot |>
+#   dplyr::filter(gene %in% selected_gene_ids)
+# 
+# if (drop_no_go) {
+#   gene_nodes <- gene_nodes |>
+#     dplyr::filter(GO_process != "No_GO_enrichment")
+# }
+# 
+# # 4. GO centers
+# GO_groups <- unique(gene_nodes$GO_process)
+# 
+# core_GO <- selected_GOs[selected_GOs %in% GO_groups]
+# other_GO <- setdiff(GO_groups, core_GO)
+# 
+# n_core <- length(core_GO)
+# 
+# core_centers <- data.frame(
+#   GO_process = core_GO,
+#   is_core_GO = TRUE,
+#   center_x = 700 * cos(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   center_y = 700 * sin(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   center_z = 0
+# )
+# 
+# # 5. Assign associated GO groups to nearest linked core GO
+# GO_links_for_position <- selected_edges_gene |>
+#   dplyr::left_join(
+#     gene_nodes |> dplyr::select(from = gene, GO_from = GO_process),
+#     by = "from"
+#   ) |>
+#   dplyr::left_join(
+#     gene_nodes |> dplyr::select(to = gene, GO_to = GO_process),
+#     by = "to"
+#   ) |>
+#   dplyr::filter(!is.na(GO_from), !is.na(GO_to)) |>
+#   dplyr::filter(GO_from != GO_to)
+# 
+# other_GO_assignment <- GO_links_for_position |>
+#   dplyr::mutate(
+#     core_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_from,
+#       GO_to %in% core_GO ~ GO_to,
+#       TRUE ~ NA_character_
+#     ),
+#     other_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_to,
+#       GO_to %in% core_GO ~ GO_from,
+#       TRUE ~ NA_character_
+#     )
+#   ) |>
+#   dplyr::filter(!is.na(core_GO), !is.na(other_GO)) |>
+#   dplyr::count(core_GO, other_GO, sort = TRUE) |>
+#   dplyr::group_by(other_GO) |>
+#   dplyr::slice_max(n, n = 1, with_ties = FALSE) |>
+#   dplyr::ungroup()
+# 
+# set.seed(123)
+# 
+# other_centers <- other_GO_assignment |>
+#   dplyr::left_join(
+#     core_centers |>
+#       dplyr::select(
+#         core_GO = GO_process,
+#         core_x = center_x,
+#         core_y = center_y,
+#         core_z = center_z
+#       ),
+#     by = "core_GO"
+#   ) |>
+#   dplyr::group_by(core_GO) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = runif(dplyr::n(), 550, 950),
+#     center_x = core_x + local_radius * cos(local_angle),
+#     center_y = core_y + local_radius * sin(local_angle),
+#     center_z = core_z + rnorm(dplyr::n(), 200, 180),
+#     GO_process = other_GO,
+#     is_core_GO = FALSE
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::select(
+#     GO_process,
+#     is_core_GO,
+#     center_x,
+#     center_y,
+#     center_z
+#   )
+# 
+# go_centers <- dplyr::bind_rows(
+#   core_centers,
+#   other_centers
+# )
+# 
+# # 6. Place genes around their GO centers
+# gene_nodes_clean <- gene_nodes |>
+#   dplyr::select(
+#     -dplyr::any_of(c(
+#       "x", "y", "z",
+#       "center_x", "center_y", "center_z",
+#       "is_core_GO"
+#     ))
+#   )
+# 
+# set.seed(123)
+# 
+# gene_nodes_plot <- gene_nodes_clean |>
+#   dplyr::left_join(go_centers, by = "GO_process") |>
+#   dplyr::filter(!is.na(center_x), !is.na(center_y), !is.na(center_z)) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = ifelse(
+#       is_core_GO,
+#       runif(dplyr::n(), 80, 260),
+#       runif(dplyr::n(), 60, 200)
+#     ),
+#     x = center_x + local_radius * cos(local_angle),
+#     y = center_y + local_radius * sin(local_angle),
+#     z = center_z + rnorm(dplyr::n(), 0, 90),
+#     node_size = ifelse(is_core_GO, 7, 4)
+#   ) |>
+#   dplyr::ungroup()
+# 
+# # 7. Edge coordinates between concrete genes
+# gene_edge_coords <- selected_edges_gene |>
+#   dplyr::left_join(
+#     gene_nodes_plot,
+#     by = c("from" = "gene")
+#   ) |>
+#   dplyr::rename(
+#     x_from = x,
+#     y_from = y,
+#     z_from = z,
+#     GO_from = GO_process
+#   ) |>
+#   dplyr::left_join(
+#     gene_nodes_plot,
+#     by = c("to" = "gene")
+#   ) |>
+#   dplyr::rename(
+#     x_to = x,
+#     y_to = y,
+#     z_to = z,
+#     GO_to = GO_process
+#   ) |>
+#   dplyr::filter(!is.na(x_from), !is.na(x_to))
+# 
+# # 8. Colors for GO regions and points
+# GO_levels <- unique(gene_nodes_plot$GO_process)
+# 
+# GO_colors <- setNames(
+#   grDevices::rainbow(length(GO_levels), alpha = 0.18),
+#   GO_levels
+# )
+# 
+# GO_point_colors <- setNames(
+#   grDevices::rainbow(length(GO_levels), alpha = 1),
+#   GO_levels
+# )
+# 
+# # 9. Plot
+# p <- plotly::plot_ly()
+# 
+# # Gene-gene edges
+# for (i in seq_len(nrow(gene_edge_coords))) {
+#   p <- p |>
+#     plotly::add_trace(
+#       x = c(gene_edge_coords$x_from[i], gene_edge_coords$x_to[i]),
+#       y = c(gene_edge_coords$y_from[i], gene_edge_coords$y_to[i]),
+#       z = c(gene_edge_coords$z_from[i], gene_edge_coords$z_to[i]),
+#       type = "scatter3d",
+#       mode = "lines",
+#       line = list(
+#         width = 1,
+#         color = "rgba(0,0,0,0.25)"
+#       ),
+#       showlegend = FALSE,
+#       hoverinfo = "none"
+#     )
+# }
+# 
+# # GO region shells
+# for (go in unique(gene_nodes_plot$GO_process)) {
+# 
+#   region <- gene_nodes_plot |>
+#     dplyr::filter(GO_process == go)
+# 
+#   if (nrow(region) < 3) next
+# 
+#   cx <- mean(region$x, na.rm = TRUE)
+#   cy <- mean(region$y, na.rm = TRUE)
+#   cz <- mean(region$z, na.rm = TRUE)
+# 
+#   r <- max(
+#     sqrt(
+#       (region$x - cx)^2 +
+#         (region$y - cy)^2 +
+#         (region$z - cz)^2
+#     ),
+#     na.rm = TRUE
+#   ) * 1.18
+# 
+#   theta <- seq(0, 2 * pi, length.out = 25)
+#   phi <- seq(0, pi, length.out = 15)
+# 
+#   sphere_x <- outer(cos(theta), sin(phi)) * r + cx
+#   sphere_y <- outer(sin(theta), sin(phi)) * r + cy
+#   sphere_z <- outer(rep(1, length(theta)), cos(phi)) * r + cz
+# 
+#   p <- p |>
+#     plotly::add_trace(
+#       x = sphere_x,
+#       y = sphere_y,
+#       z = sphere_z,
+#       type = "surface",
+#       opacity = 0.18,
+#       surfacecolor = matrix(
+#         1,
+#         nrow = nrow(sphere_x),
+#         ncol = ncol(sphere_x)
+#       ),
+#       colorscale = list(
+#         list(0, GO_colors[[go]]),
+#         list(1, GO_colors[[go]])
+#       ),
+#       showscale = FALSE,
+#       hoverinfo = "none",
+#       showlegend = FALSE
+#     )
+# }
+# 
+# # Genes as points
+# p <- p |>
+#   plotly::add_trace(
+#     data = gene_nodes_plot,
+#     x = ~x,
+#     y = ~y,
+#     z = ~z,
+#     type = "scatter3d",
+#     mode = "markers",
+#     marker = list(
+#       size = ~node_size,
+#       color = GO_point_colors[gene_nodes_plot$GO_process]
+#     ),
+#     text = ~paste0(
+#       "Gene: ", gene,
+#       "<br>Symbol: ", gene_symbol,
+#       "<br>GO process: ", GO_process,
+#       "<br>Core GO: ", is_core_GO
+#     ),
+#     hoverinfo = "text",
+#     showlegend = FALSE
+#   )
+# 
+# # Core GO labels only
+# p <- p |>
+#   plotly::add_trace(
+#     data = go_centers |> dplyr::filter(is_core_GO),
+#     x = ~center_x,
+#     y = ~center_y,
+#     z = ~center_z,
+#     type = "scatter3d",
+#     mode = "text",
+#     text = ~GO_process,
+#     textposition = "top center",
+#     hoverinfo = "none",
+#     showlegend = FALSE
+#   ) |>
+#   plotly::layout(
+#     title = "3D GO-gene network with colored GO regions",
+#     showlegend = FALSE,
+#     scene = list(
+#       xaxis = list(title = "", showticklabels = FALSE),
+#       yaxis = list(title = "", showticklabels = FALSE),
+#       zaxis = list(title = "", showticklabels = FALSE)
+#     ),
+#     margin = list(l = 0, r = 0, b = 0, t = 40)
+#   )
+# 
+# p
+```
+
+```{r}
+#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
+# # 
+# # 
+# # Rebuild long gene-GO annotation preserving duplicated gene-GO memberships(ниже он есть в блоке 7)
+# # gene_GO_annotation_long <- go_graph_df |>
+# #   dplyr::select(
+# #     GO_process = Description,
+# #     GO_padj = p.adjust,
+# #     geneID
+# #   ) |>
+# #   tidyr::separate_rows(geneID, sep = "/") |>
+# #   dplyr::rename(ENTREZID = geneID) |>
+# #   dplyr::left_join(gene_map, by = "ENTREZID") |>
+# #   dplyr::rename(
+# #     gene = ENSEMBL,
+# #     gene_symbol = SYMBOL
+# #   ) |>
+# #   dplyr::filter(!is.na(gene))
+# #
+# # shared_core_genes <- gene_GO_annotation_long |>
+# #   dplyr::filter(GO_process %in% selected_GOs) |>
+# #   dplyr::group_by(gene) |>
+# #   dplyr::summarise(
+# #     n_core_GO = dplyr::n_distinct(GO_process),
+# #     shared_core_GO = paste(unique(GO_process), collapse = " | "),
+# #     .groups = "drop"
+# #   ) |>
+# #   dplyr::filter(n_core_GO >= 2)
+# 
+# 
+# 
+# library(dplyr)
+# library(plotly)
+# 
+# # ============================================================
+# # Hybrid 3D GO-gene network with colored GO regions
+# # Shared genes between 2+ core GO processes are black
+# # ============================================================
+# 
+# selected_GOs <- c(
+#   "actin filament organization",
+#   "actomyosin structure organization",
+#   "actomyosin structure organization"
+# )
+# #более свободный порог
+# top_selected_genes <- 600
+# top_neighbors_per_gene <- 300
+# min_similarity <- 0.7
+# drop_no_go <- TRUE
+# 
+# # top_selected_genes <- 300
+# # top_neighbors_per_gene <- 100
+# # min_similarity <- 0.85
+# # drop_no_go <- TRUE
+# 
+# # 1. Core GO genes
+# core_gene_nodes <- nodes_plot |>
+#   dplyr::filter(GO_process %in% selected_GOs) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::slice_head(n = top_selected_genes) |>
+#   dplyr::ungroup()
+# 
+# core_genes <- unique(core_gene_nodes$gene)
+# 
+# # 2. Gene-gene edges from core GO genes to correlated genes
+# selected_edges_gene <- edges |>
+#   dplyr::filter(from %in% core_genes | to %in% core_genes) |>
+#   dplyr::filter(weight >= min_similarity) |>
+#   dplyr::group_by(from) |>
+#   dplyr::slice_head(n = top_neighbors_per_gene) |>
+#   dplyr::ungroup()
+# 
+# # 3. All genes involved
+# selected_gene_ids <- unique(c(
+#   selected_edges_gene$from,
+#   selected_edges_gene$to,
+#   core_genes
+# ))
+# 
+# gene_nodes <- nodes_plot |>
+#   dplyr::filter(gene %in% selected_gene_ids)
+# 
+# if (drop_no_go) {
+#   gene_nodes <- gene_nodes |>
+#     dplyr::filter(GO_process != "No_GO_enrichment")
+# }
+# 
+# # 4. GO centers
+# GO_groups <- unique(gene_nodes$GO_process)
+# 
+# core_GO <- selected_GOs[selected_GOs %in% GO_groups]
+# other_GO <- setdiff(GO_groups, core_GO)
+# 
+# n_core <- length(core_GO)
+# 
+# core_centers <- data.frame(
+#   GO_process = core_GO,
+#   is_core_GO = TRUE,
+#   center_x = 700 * cos(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   center_y = 700 * sin(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   center_z = 0
+# )
+# 
+# # 5. Assign associated GO groups to nearest linked core GO
+# GO_links_for_position <- selected_edges_gene |>
+#   dplyr::left_join(
+#     gene_nodes |> dplyr::select(from = gene, GO_from = GO_process),
+#     by = "from"
+#   ) |>
+#   dplyr::left_join(
+#     gene_nodes |> dplyr::select(to = gene, GO_to = GO_process),
+#     by = "to"
+#   ) |>
+#   dplyr::filter(!is.na(GO_from), !is.na(GO_to)) |>
+#   dplyr::filter(GO_from != GO_to)
+# 
+# other_GO_assignment <- GO_links_for_position |>
+#   dplyr::mutate(
+#     core_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_from,
+#       GO_to %in% core_GO ~ GO_to,
+#       TRUE ~ NA_character_
+#     ),
+#     other_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_to,
+#       GO_to %in% core_GO ~ GO_from,
+#       TRUE ~ NA_character_
+#     )
+#   ) |>
+#   dplyr::filter(!is.na(core_GO), !is.na(other_GO)) |>
+#   dplyr::count(core_GO, other_GO, sort = TRUE) |>
+#   dplyr::group_by(other_GO) |>
+#   dplyr::slice_max(n, n = 1, with_ties = FALSE) |>
+#   dplyr::ungroup()
+# 
+# set.seed(123)
+# 
+# other_centers <- other_GO_assignment |>
+#   dplyr::left_join(
+#     core_centers |>
+#       dplyr::select(
+#         core_GO = GO_process,
+#         core_x = center_x,
+#         core_y = center_y,
+#         core_z = center_z
+#       ),
+#     by = "core_GO"
+#   ) |>
+#   dplyr::group_by(core_GO) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = runif(dplyr::n(), 550, 950),
+#     center_x = core_x + local_radius * cos(local_angle),
+#     center_y = core_y + local_radius * sin(local_angle),
+#     center_z = core_z + rnorm(dplyr::n(), 200, 180),
+#     GO_process = other_GO,
+#     is_core_GO = FALSE
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::select(
+#     GO_process,
+#     is_core_GO,
+#     center_x,
+#     center_y,
+#     center_z
+#   )
+# 
+# go_centers <- dplyr::bind_rows(
+#   core_centers,
+#   other_centers
+# )
+# 
+# # 6. Place genes around their GO centers
+# gene_nodes_clean <- gene_nodes |>
+#   dplyr::select(
+#     -dplyr::any_of(c(
+#       "x", "y", "z",
+#       "center_x", "center_y", "center_z",
+#       "is_core_GO"
+#     ))
+#   )
+# 
+# set.seed(123)
+# 
+# gene_nodes_plot <- gene_nodes_clean |>
+#   dplyr::left_join(go_centers, by = "GO_process") |>
+#   dplyr::filter(!is.na(center_x), !is.na(center_y), !is.na(center_z)) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = ifelse(
+#       is_core_GO,
+#       runif(dplyr::n(), 80, 260),
+#       runif(dplyr::n(), 60, 200)
+#     ),
+#     x = center_x + local_radius * cos(local_angle),
+#     y = center_y + local_radius * sin(local_angle),
+#     z = center_z + rnorm(dplyr::n(), 0, 90),
+#     node_size = ifelse(is_core_GO, 7, 4)
+#   ) |>
+#   dplyr::ungroup()
+# 
+# # 7. Mark genes shared by 2+ selected core GO processes
+# # 7. Mark genes shared by 2+ selected core GO processes
+# 
+# # Rebuild long gene-GO annotation preserving duplicated gene-GO memberships
+# gene_GO_annotation_long <- go_graph_df |>
+#   dplyr::select(
+#     GO_process = Description,
+#     GO_padj = p.adjust,
+#     geneID
+#   ) |>
+#   tidyr::separate_rows(geneID, sep = "/") |>
+#   dplyr::rename(ENTREZID = geneID) |>
+#   dplyr::left_join(gene_map, by = "ENTREZID") |>
+#   dplyr::rename(
+#     gene = ENSEMBL,
+#     gene_symbol = SYMBOL
+#   ) |>
+#   dplyr::filter(!is.na(gene))
+# 
+# shared_core_genes <- gene_GO_annotation_long |>
+#   dplyr::filter(GO_process %in% selected_GOs) |>
+#   dplyr::group_by(gene) |>
+#   dplyr::summarise(
+#     n_core_GO = dplyr::n_distinct(GO_process),
+#     shared_core_GO = paste(unique(GO_process), collapse = " | "),
+#     .groups = "drop"
+#   ) |>
+#   dplyr::filter(n_core_GO >= 2)
+# 
+# 
+# # safe join with shared genes
+# gene_nodes_plot <- gene_nodes_plot |>
+#   dplyr::select(
+#     -dplyr::any_of(c(
+#       "n_core_GO",
+#       "shared_core_GO",
+#       "is_shared_core_gene"
+#     ))
+#   ) |>
+#   dplyr::left_join(
+#     shared_core_genes,
+#     by = "gene"
+#   ) |>
+#   dplyr::mutate(
+#     n_core_GO = dplyr::coalesce(n_core_GO, 0L),
+#     shared_core_GO = dplyr::coalesce(shared_core_GO, ""),
+#     is_shared_core_gene = n_core_GO >= 2
+#   )
+# 
+# # 9. Colors for GO regions and points
+# GO_levels <- unique(gene_nodes_plot$GO_process)
+# 
+# GO_colors <- setNames(
+#   grDevices::rainbow(length(GO_levels), alpha = 0.18),
+#   GO_levels
+# )
+# 
+# GO_point_colors <- setNames(
+#   grDevices::rainbow(length(GO_levels), alpha = 1),
+#   GO_levels
+# )
+# 
+# gene_nodes_plot <- gene_nodes_plot |>
+#   dplyr::mutate(
+#     point_color = ifelse(
+#       is_shared_core_gene,
+#       "black",
+#       GO_point_colors[GO_process]
+#     )
+#   )
+# # 10. Plot
+# p <- plotly::plot_ly()
+# 
+# # Gene-gene edges
+# for (i in seq_len(nrow(gene_edge_coords))) {
+#   p <- p |>
+#     plotly::add_trace(
+#       x = c(gene_edge_coords$x_from[i], gene_edge_coords$x_to[i]),
+#       y = c(gene_edge_coords$y_from[i], gene_edge_coords$y_to[i]),
+#       z = c(gene_edge_coords$z_from[i], gene_edge_coords$z_to[i]),
+#       type = "scatter3d",
+#       mode = "lines",
+#       line = list(
+#         width = 1,
+#         color = "rgba(0,0,0,0.25)"
+#       ),
+#       showlegend = FALSE,
+#       hoverinfo = "none"
+#     )
+# }
+# 
+# # GO region shells
+# for (go in unique(gene_nodes_plot$GO_process)) {
+# 
+#   region <- gene_nodes_plot |>
+#     dplyr::filter(GO_process == go)
+# 
+#   if (nrow(region) < 3) next
+# 
+#   cx <- mean(region$x, na.rm = TRUE)
+#   cy <- mean(region$y, na.rm = TRUE)
+#   cz <- mean(region$z, na.rm = TRUE)
+# 
+#   r <- max(
+#     sqrt(
+#       (region$x - cx)^2 +
+#         (region$y - cy)^2 +
+#         (region$z - cz)^2
+#     ),
+#     na.rm = TRUE
+#   ) * 1.18
+# 
+#   theta <- seq(0, 2 * pi, length.out = 25)
+#   phi <- seq(0, pi, length.out = 15)
+# 
+#   sphere_x <- outer(cos(theta), sin(phi)) * r + cx
+#   sphere_y <- outer(sin(theta), sin(phi)) * r + cy
+#   sphere_z <- outer(rep(1, length(theta)), cos(phi)) * r + cz
+# 
+#   p <- p |>
+#     plotly::add_trace(
+#       x = sphere_x,
+#       y = sphere_y,
+#       z = sphere_z,
+#       type = "surface",
+#       opacity = 0.18,
+#       surfacecolor = matrix(
+#         1,
+#         nrow = nrow(sphere_x),
+#         ncol = ncol(sphere_x)
+#       ),
+#       colorscale = list(
+#         list(0, GO_colors[[go]]),
+#         list(1, GO_colors[[go]])
+#       ),
+#       showscale = FALSE,
+#       hoverinfo = "none",
+#       showlegend = FALSE
+#     )
+# }
+# 
+# # Genes as points
+# p <- p |>
+#   plotly::add_trace(
+#     data = gene_nodes_plot,
+#     x = ~x,
+#     y = ~y,
+#     z = ~z,
+#     type = "scatter3d",
+#     mode = "markers",
+#     marker = list(
+#       size = ~node_size,
+#       color = ~point_color
+#     ),
+#     text = ~paste0(
+#       "Gene: ", gene,
+#       "<br>Symbol: ", gene_symbol,
+#       "<br>GO process: ", GO_process,
+#       "<br>Core GO: ", is_core_GO,
+#       "<br>Shared core gene: ", is_shared_core_gene,
+#       "<br>Shared core GO: ", shared_core_GO
+#     ),
+#     hoverinfo = "text",
+#     showlegend = FALSE
+#   )
+# 
+# # Core GO labels only
+# p <- p |>
+#   plotly::add_trace(
+#     data = go_centers |> dplyr::filter(is_core_GO),
+#     x = ~center_x,
+#     y = ~center_y,
+#     z = ~center_z,
+#     type = "scatter3d",
+#     mode = "text",
+#     text = ~GO_process,
+#     textposition = "top center",
+#     hoverinfo = "none",
+#     showlegend = FALSE
+#   ) |>
+#   plotly::layout(
+#     title = "3D GO-gene network with shared core genes in black",
+#     showlegend = FALSE,
+#     scene = list(
+#       xaxis = list(title = "", showticklabels = FALSE),
+#       yaxis = list(title = "", showticklabels = FALSE),
+#       zaxis = list(title = "", showticklabels = FALSE)
+#     ),
+#     margin = list(l = 0, r = 0, b = 0, t = 40)
+#   )
+# 
+# p
+# 
+# 
+# 
+# #МОЖНО ЕЩЁ ПОДОБНО ФОРМАТА СДЕЛАТЬ НО НЕ 3Д А С ТОЧКАМИ КАК РАНЬШЕ
+
+
+```
+
+```{r}
+# nodes_plot |>
+#   dplyr::count(GO_process, sort = TRUE) |>
+#   View()
+```
+
+```{r,fig.height=20, fig.width=20}
+#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
+# library(dplyr)
+# library(ggplot2)
+# library(ggrepel)
+# library(RColorBrewer)
+# 
+# # ============================================================
+# # Static 2D GO-centered latent network
+# # Same style as your original plot,
+# # but for 3 selected core GO processes.
+# # Shared secondary genes connected to 2+ core GO are black.
+# # ============================================================
+# 
+# selected_GOs <- c(
+#   "actin filament organization",
+#   "regulation of synapse structure or activity",
+#   "vesicle-mediated transport in synapse"
+# )
+# 
+# top_selected_genes <- 600
+# top_neighbors_per_gene <- 300
+# min_similarity <- 0.9
+# drop_no_go <- TRUE
+# 
+# # 1. Core GO genes
+# core_gene_nodes <- nodes_plot |>
+#   dplyr::filter(GO_process %in% selected_GOs) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::slice_head(n = top_selected_genes) |>
+#   dplyr::ungroup()
+# 
+# core_genes <- unique(core_gene_nodes$gene)
+# 
+# # 2. Edges from core GO genes to correlated genes from any GO
+# edges_selected_GO <- edges |>
+#   dplyr::filter(
+#     from %in% core_genes | to %in% core_genes
+#   ) |>
+#   dplyr::filter(weight >= min_similarity)
+# 
+# edges_from_core <- edges_selected_GO |>
+#   dplyr::filter(from %in% core_genes) |>
+#   dplyr::group_by(from) |>
+#   dplyr::arrange(dplyr::desc(weight), .by_group = TRUE) |>
+#   dplyr::slice_head(n = top_neighbors_per_gene) |>
+#   dplyr::ungroup()
+# 
+# edges_to_core <- edges_selected_GO |>
+#   dplyr::filter(to %in% core_genes) |>
+#   dplyr::group_by(to) |>
+#   dplyr::arrange(dplyr::desc(weight), .by_group = TRUE) |>
+#   dplyr::slice_head(n = top_neighbors_per_gene) |>
+#   dplyr::ungroup()
+# 
+# edges_selected_GO <- dplyr::bind_rows(
+#   edges_from_core,
+#   edges_to_core
+# ) |>
+#   dplyr::distinct(from, to, .keep_all = TRUE)
+# 
+# # 3. Nodes involved in selected edges
+# selected_gene_ids <- unique(c(
+#   edges_selected_GO$from,
+#   edges_selected_GO$to,
+#   core_genes
+# ))
+# 
+# nodes_for_plot <- nodes_plot |>
+#   dplyr::filter(gene %in% selected_gene_ids)
+# 
+# if (drop_no_go) {
+#   nodes_for_plot <- nodes_for_plot |>
+#     dplyr::filter(GO_process != "No_GO_enrichment")
+# }
+# # Keep only core GO <-> secondary GO edges
+# # Remove core <-> core and secondary <-> secondary edges
+# 
+# edges_selected_GO <- edges_selected_GO |>
+#   dplyr::left_join(
+#     nodes_for_plot |>
+#       dplyr::select(from = gene, GO_from = GO_process),
+#     by = "from"
+#   ) |>
+#   dplyr::left_join(
+#     nodes_for_plot |>
+#       dplyr::select(to = gene, GO_to = GO_process),
+#     by = "to"
+#   ) |>
+#   dplyr::filter(
+#     (GO_from %in% selected_GOs & !(GO_to %in% selected_GOs)) |
+#       (GO_to %in% selected_GOs & !(GO_from %in% selected_GOs))
+#   ) |>
+#   dplyr::select(from, to, weight)
+# # 4. Core gene info
+# core_gene_info <- nodes_for_plot |>
+#   dplyr::filter(GO_process %in% selected_GOs) |>
+#   dplyr::select(
+#     core_gene = gene,
+#     core_GO = GO_process
+#   ) |>
+#   dplyr::distinct()
+# 
+# # 5. Detect secondary genes connected to 2+ core GO processes
+# bridge_links_from <- edges_selected_GO |>
+#   dplyr::inner_join(
+#     core_gene_info,
+#     by = c("from" = "core_gene")
+#   ) |>
+#   dplyr::transmute(
+#     connected_gene = to,
+#     connected_core_GO = core_GO
+#   )
+# 
+# bridge_links_to <- edges_selected_GO |>
+#   dplyr::inner_join(
+#     core_gene_info,
+#     by = c("to" = "core_gene")
+#   ) |>
+#   dplyr::transmute(
+#     connected_gene = from,
+#     connected_core_GO = core_GO
+#   )
+# 
+# bridge_gene_summary <- dplyr::bind_rows(
+#   bridge_links_from,
+#   bridge_links_to
+# ) |>
+#   dplyr::filter(!(connected_gene %in% core_genes)) |>
+#   dplyr::group_by(connected_gene) |>
+#   dplyr::summarise(
+#     n_connected_core_GO = dplyr::n_distinct(connected_core_GO),
+#     connected_core_GO = paste(unique(connected_core_GO), collapse = " | "),
+#     .groups = "drop"
+#   ) |>
+#   dplyr::filter(n_connected_core_GO >= 2)
+# 
+# # 6. Rebuild organized GO layout similar to your original ggplot style
+# 
+# GO_groups <- unique(nodes_for_plot$GO_process)
+# 
+# core_GO <- selected_GOs[selected_GOs %in% GO_groups]
+# other_GO <- setdiff(GO_groups, core_GO)
+# 
+# n_core <- length(core_GO)
+# 
+# core_centers <- data.frame(
+#   GO_process = core_GO,
+#   is_core_GO = TRUE,
+#   center_x = 2500 * cos(seq(0, 2 * pi, length.out = n_core + 1)[-1]),
+#   center_y = 2500 * sin(seq(0, 2 * pi, length.out = n_core + 1)[-1])
+# )
+# 
+# GO_links_for_position <- edges_selected_GO |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(from = gene, GO_from = GO_process),
+#     by = "from"
+#   ) |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(to = gene, GO_to = GO_process),
+#     by = "to"
+#   ) |>
+#   dplyr::filter(!is.na(GO_from), !is.na(GO_to), GO_from != GO_to)
+# 
+# other_GO_assignment <- GO_links_for_position |>
+#   dplyr::mutate(
+#     core_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_from,
+#       GO_to %in% core_GO ~ GO_to,
+#       TRUE ~ NA_character_
+#     ),
+#     other_GO = dplyr::case_when(
+#       GO_from %in% core_GO ~ GO_to,
+#       GO_to %in% core_GO ~ GO_from,
+#       TRUE ~ NA_character_
+#     )
+#   ) |>
+#   dplyr::filter(!is.na(core_GO), !is.na(other_GO)) |>
+#   dplyr::count(core_GO, other_GO, sort = TRUE) |>
+#   dplyr::group_by(other_GO) |>
+#   dplyr::slice_max(n, n = 1, with_ties = FALSE) |>
+#   dplyr::ungroup()
+# 
+# set.seed(123)
+# 
+# other_centers <- other_GO_assignment |>
+#   dplyr::left_join(
+#     core_centers |>
+#       dplyr::select(
+#         core_GO = GO_process,
+#         core_x = center_x,
+#         core_y = center_y
+#       ),
+#     by = "core_GO"
+#   ) |>
+#   dplyr::group_by(core_GO) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = seq(900, 1800, length.out = dplyr::n()),
+#     center_x = core_x + local_radius * cos(local_angle),
+#     center_y = core_y + local_radius * sin(local_angle),
+#     GO_process = other_GO,
+#     is_core_GO = FALSE
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::select(
+#     GO_process,
+#     is_core_GO,
+#     center_x,
+#     center_y
+#   )
+# 
+# go_centers <- dplyr::bind_rows(
+#   core_centers,
+#   other_centers |>
+#     dplyr::filter(!(GO_process %in% core_GO))
+# ) |>
+#   dplyr::distinct(GO_process, .keep_all = TRUE)
+# 
+# # 7. Place genes compactly around their GO centers
+# 
+# nodes_for_plot <- nodes_for_plot |>
+#   dplyr::select(
+#     -dplyr::any_of(c(
+#       "x", "y",
+#       "center_x", "center_y",
+#       "is_core_GO",
+#       "node_type",
+#       "n_connected_core_GO",
+#       "connected_core_GO",
+#       "is_bridge_between_core_GO"
+#     ))
+#   ) |>
+#   dplyr::left_join(go_centers, by = "GO_process") |>
+#   dplyr::filter(!is.na(center_x), !is.na(center_y)) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = ifelse(
+#       is_core_GO,
+#       runif(dplyr::n(), 120, 500),
+#       runif(dplyr::n(), 80, 280)
+#     ),
+#     x = center_x + local_radius * cos(local_angle),
+#     y = center_y + local_radius * sin(local_angle),
+#     node_type = ifelse(
+#       GO_process %in% selected_GOs,
+#       "selected_GO_gene",
+#       "secondary_GO_gene"
+#     )
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::left_join(
+#     bridge_gene_summary,
+#     by = c("gene" = "connected_gene")
+#   ) |>
+#   dplyr::mutate(
+#     n_connected_core_GO = dplyr::coalesce(n_connected_core_GO, 0L),
+#     connected_core_GO = dplyr::coalesce(connected_core_GO, ""),
+#     is_bridge_between_core_GO = n_connected_core_GO >= 2
+#   )
+# 
+# # 8. Colors
+# go_levels <- unique(nodes_for_plot$GO_process)
+# 
+# palette_colors <- colorRampPalette(
+#   RColorBrewer::brewer.pal(12, "Set3")
+# )(length(go_levels))
+# 
+# names(palette_colors) <- go_levels
+# 
+# # core GO colors
+# core_colors <- c("#E41A1C", "#377EB8", "#4DAF4A")
+# names(core_colors) <- selected_GOs[seq_along(core_colors)]
+# 
+# palette_colors[names(core_colors)] <- core_colors[names(core_colors)]
+# 
+# # 9. Edges for ggplot
+# edges_plot <- edges_selected_GO |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("from" = "gene")
+#   ) |>
+#   dplyr::rename(x_from = x, y_from = y) |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("to" = "gene")
+#   ) |>
+#   dplyr::rename(x_to = x, y_to = y) |>
+#   dplyr::filter(
+#     !is.na(x_from),
+#     !is.na(y_from),
+#     !is.na(x_to),
+#     !is.na(y_to)
+#   )
+# 
+# # 10. Nodes
+# nodes_for_plot_sized <- nodes_for_plot |>
+#   dplyr::mutate(
+#     node_size = dplyr::case_when(
+#       is_bridge_between_core_GO ~ 4.8,
+#       node_type == "selected_GO_gene" ~ 4.5,
+#       TRUE ~ 2.2
+#     ),
+#     node_fill = ifelse(
+#       is_bridge_between_core_GO,
+#       "black",
+#       palette_colors[GO_process]
+#     )
+#   )
+# 
+# # 11. GO cluster labels
+# cluster_labels <- nodes_for_plot_sized |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::summarise(
+#     label_x = mean(x, na.rm = TRUE),
+#     label_y = max(y, na.rm = TRUE) + 120,
+#     n_genes = dplyr::n(),
+#     .groups = "drop"
+#   )
+# 
+# # 12. Core gene labels only
+# selected_gene_labels <- nodes_for_plot_sized |>
+#   dplyr::filter(
+#     GO_process %in% selected_GOs,
+#     node_type == "selected_GO_gene"
+#   ) |>
+#   dplyr::group_by(GO_process) |>
+#   dplyr::slice_head(n = 15) |>
+#   dplyr::ungroup()
+# 
+# # 13. Plot
+# p_static <- ggplot() +
+# 
+#   geom_segment(
+#     data = edges_plot,
+#     aes(
+#       x = x_from,
+#       y = y_from,
+#       xend = x_to,
+#       yend = y_to
+#     ),
+#     color = "grey35",
+#     linewidth = 0.25,
+#     alpha = 0.35
+#   ) +
+# 
+#   geom_point(
+#     data = nodes_for_plot_sized,
+#     aes(
+#       x = x,
+#       y = y
+#     ),
+#     fill = nodes_for_plot_sized$node_fill,
+#     size = nodes_for_plot_sized$node_size,
+#     shape = 21,
+#     color = "white",
+#     stroke = 0.25,
+#     alpha = 0.95,
+#     show.legend = FALSE
+#   ) +
+# 
+#   ggrepel::geom_text_repel(
+#     data = selected_gene_labels,
+#     aes(
+#       x = x,
+#       y = y,
+#       label = gene_symbol
+#     ),
+#     size = 3,
+#     max.overlaps = 80,
+#     box.padding = 0.35,
+#     point.padding = 0.25,
+#     segment.color = "grey55",
+#     color = "black"
+#   ) +
+# 
+#   geom_text(
+#     data = cluster_labels,
+#     aes(
+#       x = label_x,
+#       y = label_y,
+#       label = paste0(GO_process, "\n", n_genes, " genes")
+#     ),
+#     size = 3.2,
+#     fontface = "bold",
+#     color = "black",
+#     lineheight = 0.9
+#   ) +
+# 
+#   coord_equal() +
+#   theme_void() +
+#   theme(
+#     legend.position = "none",
+#     plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+#     plot.subtitle = element_text(size = 11, hjust = 0.5, color = "grey30"),
+#     plot.margin = margin(10, 10, 10, 10)
+#   ) +
+#   labs(
+#     title = "GO-centered latent network: selected GO processes",
+#     subtitle = "Nodes are genes; edges are latent-space similarities; black nodes connect to 2+ selected GO processes"
+#   )
+# 
+# p_static
+
+```
+
+```{r}
+#чтобы графики выглядели менее запутанно попробуй сперва сгруппировать несколько GO в один генеральный GO процесс(например, рост нейронов итд) как ты это делал раньше, и уже от него ищи с кем там он коррелирует(но сперва разберись, не будет ли это слишком грубый анализ)
+```
+
+# В ПОИСКАХ HUB GENES FROM WGCNA
+
+# 9.0 Estimating sft
+
+```{r}
+#przepisuje tu obiekt-pochodna od Deseq2 - human_vs_chimp_vsn_counts, zeby dopasowac go format do dozwolonego w WGCNA(czyli robie t() )
+human_vs_chimp_vsn_counts <- t(assay(human_vs_chimp_vsn))
+
+# making powers vector
+library(WGCNA)
+
+options(stringsAsFactors = FALSE)
+allowWGCNAThreads()
+
+gsg <- goodSamplesGenes(human_vs_chimp_vsn_counts, verbose = 3)
+
+if (!gsg$allOK) {
+  gsg_human_vs_chimp_vsn_counts <- human_vs_chimp_vsn_counts[gsg$goodSamples, gsg$goodGenes]
+} else {
+  gsg_human_vs_chimp_vsn_counts <- human_vs_chimp_vsn_counts
+}
+
+
+power <- c(1:20, seq(22, 50, 2))
+length(power)
+
+sft <- pickSoftThreshold(
+  gsg_human_vs_chimp_vsn_counts,
+  powerVector = power,
+  networkType = "signed",
+  verbose = 5
+)
+
+sft.data <- sft$fitIndices
+
+cat("Requested powers:", length(power), "\n")
+cat("Returned rows:", nrow(sft.data), "\n")
+
+```
+
+```{r}
+#usuniecie batch efektu przed przeprowadzeniem wgcna
+
+library(limma)
+
+# align samples in expression matrix to metadata
+gsg_human_vs_chimp_vsn_counts_sub <- gsg_human_vs_chimp_vsn_counts[
+  rownames(meta_sub_no_outliers), , drop = FALSE
+]
+
+# check that sample order is now identical
+stopifnot(identical(rownames(gsg_human_vs_chimp_vsn_counts_sub),
+                    rownames(meta_sub_no_outliers)))
+
+# drop unused factor levels
+meta_sub_no_outliers$species <- droplevels(meta_sub_no_outliers$species)
+meta_sub_no_outliers$condition_date <- droplevels(meta_sub_no_outliers$condition_date)
+
+# limma expects genes x samples, so transpose
+gsg_human_vs_chimp_vsn_counts_sub_t <- t(gsg_human_vs_chimp_vsn_counts_sub)
+
+# preserve biological signal of interest
+design_species <- model.matrix(~ species, data = meta_sub_no_outliers)
+
+# remove technical batch effect before WGCNA
+gsg_human_vs_chimp_vsn_counts_corrected_t <- removeBatchEffect(
+  gsg_human_vs_chimp_vsn_counts_sub_t,
+  batch = meta_sub_no_outliers$condition_date,
+  design = design_species
+)
+
+# transpose back: samples x genes for WGCNA
+gsg_human_vs_chimp_vsn_counts_corrected <- t(gsg_human_vs_chimp_vsn_counts_corrected_t)
+
+# final check
+dim(gsg_human_vs_chimp_vsn_counts_corrected)
+
+```
+
+```{r}
+#ТУТ ВОЗМОЖНО СЛЕДУЕТ ОПРОБОВАТЬ РАЗНЫЕ СОФТ ПАВЕР ПОПРОБОВАТЬ И СМОТРЕТЬ ПО СМЫСЛУ ЧТО БОЛЬШЕ ПОДХОДИТ. ПОТОМУ ЧТО 29 ВРОДЕ КАК НЕ ТИПИЧНО БОЛЬШОЕ ЗНАЧЕНИЕ SOFT POWER
+
+#| results: false
+
+# make matrix numeric
+gsg_human_vs_chimp_vsn_counts[] <- sapply(gsg_human_vs_chimp_vsn_counts, as.numeric)
+#29 - 20 модулей получил
+soft_power <- 29
+temp_cor <- cor
+cor <- WGCNA::cor
+
+soft_power <- 29
+
+blockwisenet <- blockwiseModules(
+  gsg_human_vs_chimp_vsn_counts,
+  maxBlockSize = 15000,
+  TOMType = "signed",
+  networkType = "signed",
+  power = soft_power,
+  mergeCutHeight = 0.25,
+  numericLabels = FALSE,
+  randomSeed = 1234,
+  verbose = 3,
+  corFnc = "cor",
+  corOptions = list(method = "spearman")
+)
+
+```
+
+## 11.2 moduls presence and eigengene escimating
+
+```{r}
+#| results: false
+cor <- temp_cor
+
+#Module Eigengene Infromation
+module_eigengenes <- blockwisenet$MEs
+head(module_eigengenes)
+
+dim(module_eigengenes)
+colnames(module_eigengenes)
+```
+
+## 11.3 moduls significance
+
+```{r}
+#| results: false
+
+library(limma)
+
+# grey modul zazwyczaj usuwaja
+module_eigengenes_sub <- module_eigengenes[, colnames(module_eigengenes) != "MEgrey", drop = FALSE]
+
+
+# spawdzenie kolejnosci
+module_eigengenes_sub <- module_eigengenes_sub[rownames(meta_sub_no_outliers), , drop = FALSE]
+
+# design matrix: batch + species
+design <- model.matrix(~ condition_date + species, data = meta_sub_no_outliers)
+
+# matrix of modules: modules x samples
+ME_mat <- t(module_eigengenes_sub)
+
+# checks
+stopifnot(nrow(design) == ncol(ME_mat))
+stopifnot(identical(rownames(design), colnames(ME_mat)))
+
+# limma model
+fit <- lmFit(ME_mat, design)
+fit <- eBayes(fit)
+
+# coefficient for Human vs Chimpanzee
+coef_name <- grep("^species", colnames(design), value = TRUE)[1]
+coef_name
+
+# results table
+me_stats <- topTable(fit, coef = coef_name, number = Inf, sort.by = "P")
+
+# add module names
+me_stats$module <- rownames(me_stats)
+
+# keep key columns
+me_stats <- me_stats[, c("module", "logFC", "P.Value", "adj.P.Val")]
+
+# view top modules
+head(me_stats, 20)
+```
+
+```{r}
+#ЗНАЧЕМЫЕ МОДУЛИ
+sig_modules <- me_stats$module[me_stats$adj.P.Val < 0.05]
+sig_modules
+```
+
+```{r}
+#Get module colors for each gene
+module_colors <- blockwisenet$colors
+names(module_colors) <- colnames(gsg_human_vs_chimp_vsn_counts)
+```
+
+```{r}
+#Calculate module membership / kME
+MEs <- moduleEigengenes(
+  gsg_human_vs_chimp_vsn_counts,
+  colors = module_colors
+)$eigengenes
+
+MEs <- orderMEs(MEs)
+
+kME <- signedKME(
+  gsg_human_vs_chimp_vsn_counts,
+  MEs,
+  corFnc = "cor",
+  corOptions = 'use = "p", method = "spearman"'
+)
+```
+
+```{r}
+#Extract hub genes from one module
+module_name <- "MEblue"
+color <- sub("^ME", "", module_name)
+
+genes_in_module <- names(module_colors)[module_colors == color]
+
+kME_col <- paste0("kME", color)
+
+hub_genes_blue <- data.frame(
+  gene = genes_in_module,
+  kME = kME[genes_in_module, kME_col]
+)
+
+hub_genes_blue <- hub_genes_blue[order(abs(hub_genes_blue$kME), decreasing = TRUE), ]
+
+head(hub_genes_blue, 20)
+```
+
+```{r}
+#Extract hub genes from all significant WGCNA modules
+
+hub_list <- lapply(sig_modules, function(module_name) {
+  
+  color <- sub("^ME", "", module_name)
+  genes_in_module <- names(module_colors)[module_colors == color]
+  kME_col <- paste0("kME", color)
+  
+  hubs <- data.frame(
+    module = module_name,
+    gene = genes_in_module,
+    kME = kME[genes_in_module, kME_col]
+  )
+  
+  hubs <- hubs[order(abs(hubs$kME), decreasing = TRUE), ]
+  
+  hubs
+})
+
+hub_genes <- do.call(rbind, hub_list)
+# View(hub_genes)
+```
+
+```{r}
+#condition-relevant hubs
+trait <- meta_sub_no_outliers$species
+trait_numeric <- as.numeric(trait == "Human")
+
+GS <- cor(
+  gsg_human_vs_chimp_vsn_counts,
+  trait_numeric,
+  method = "spearman"
+)
+
+GS <- as.data.frame(GS)
+colnames(GS) <- "GS_species"
+
+hub_genes$GS_species <- GS[hub_genes$gene, "GS_species"]
+
+hub_genes <- hub_genes[
+  order(abs(hub_genes$kME), abs(hub_genes$GS_species), decreasing = TRUE),
+]
+
+head(hub_genes, 50)
+```
+
+## "STRING" Analysis ДЛЯ HUB GENES
+
+```{r}
+candidate_hubs <- subset(
+  hub_genes,
+  abs(kME) > 0.8
+)
+head(candidate_hubs)
+dim(candidate_hubs)
+```
+
+```{r}
+# Significant DEG
+sig_deg <- res_filtered |>
+  as.data.frame() |>
+  dplyr::filter(
+    !is.na(padj),
+    padj < 0.05,
+    abs(log2FoldChange) > 1
+  )
+
+# Significant hub genes = hub genes that are also significant DEG
+significant_hub_genes <- hub_genes |>
+  dplyr::filter(gene %in% rownames(sig_deg))
+
+View(significant_hub_genes)
+
+
+```
+
+```{r}
+output_dir <- "/home/aleks/Desktop/GO:Enrichment project/STRING_hub_genes"
+
+# Save significant hub genes for each significant module
+for (mod in unique(significant_hub_genes$module)) {
+  
+  genes <- significant_hub_genes$gene[
+    significant_hub_genes$module == mod
+  ]
+  
+  file_name <- file.path(
+    output_dir,
+    paste0(
+      gsub("^ME", "", mod),
+      "_significant_hub_genes.txt"
+    )
+  )
+  
+  write.table(
+    genes,
+    file = file_name,
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
+}
+
+```
+
+```{r}
+#БЕРУ ПОЛУЧИВШИЙСЯ СТРИНГ ФАЙЛ(ТАМ ДЛЯ КАЖДОГО МОДУЛЯ СВОЙ)
+string_file <- "/home/aleks/Desktop/GO:Enrichment project/STRING_hub_genes/neighboors for the hub-genes/string_interactions_short.tsv"
+
+string_edges <- read.delim(
+  string_file,
+  header = TRUE,
+  sep = "\t",
+  stringsAsFactors = FALSE
+)
+
+head(string_edges)
+dim(string_edges)
+colnames(string_edges)
+```
+
+```{r}
+library(igraph)
+
+string_high <- subset(string_edges, combined_score >= 0.7)
+
+nrow(string_high)
+
+g <- graph_from_data_frame(
+  string_high[, c("X.node1", "node2")],
+  directed = FALSE
+)
+
+vcount(g)
+ecount(g)
+
+string_degree <- sort(degree(g), decreasing = TRUE)
+
+string_hubs_df <- data.frame(
+  protein = names(string_degree),
+  degree = as.numeric(string_degree)
+)
+
+head(string_hubs_df)
+```
+
+```{r}
+library(org.Rn.eg.db)
+library(AnnotationDbi)
+
+hub_genes$symbol <- mapIds(
+  org.Rn.eg.db,
+  keys = hub_genes$gene,
+  keytype = "ENSEMBL",
+  column = "SYMBOL",
+  multiVals = "first"
+)
+hub_symbols <- na.omit(unique(hub_genes$symbol))
+
+overlap_hubs <- intersect(
+  string_hubs_df$protein,
+  hub_symbols
+)
+
+overlap_hubs
+```
+
+```{r}
+string_hubs_df[string_hubs_df$protein %in% overlap_hubs, ]
+
+```
+
+```{r}
+#совместно kME с количеством связий из STRING
+combined_hubs <- merge(
+  hub_genes,
+  string_hubs_df,
+  by.x = "symbol",
+  by.y = "protein"
+)
+
+
+# head(combined_hubs)
+
+combined_hubs <- combined_hubs[
+  order(
+    abs(combined_hubs$kME),
+    combined_hubs$degree,
+    decreasing = TRUE
+  ),
+]
+
+View(combined_hubs)
+```
+
+```{r}
+#можно посмотреть откуда в STRING берутся полученные score для combined_score(у меня >= 0.7 ) из реальных экспериментов, из баз данных или из известной ко-експрессии
+# вот так:
+# hub_interactions |>
+#   dplyr::select(
+#     X.node1,
+#     node2,
+#     coexpression,
+#     experimentally_determined_interaction,
+#     database_annotated,
+#     automated_textmining,
+#     combined_score
+#   )
+# summary(string_edges$combined_score)
+# 
+# range(string_edges$combined_score)
+
+
+#Filter by confidence:
+hub_interactions <- subset(
+  string_edges,
+  combined_score >= 0.7 &
+  (
+    X.node1 %in% overlap_hubs |
+    node2 %in% overlap_hubs
+  )
+)
+View(hub_interactions)
+
+#Extract all interacting proteins
+all_neighbors <- unique(c(
+  hub_interactions$X.node1,
+  hub_interactions$node2
+))
+all_neighbors
+
+
+
+#Посмотреть внешние интерактивные гены моих hub-генов, но внимание, ими могут оказаться сами же hub-гены! и тогда получится 0, но смысл от этого не теряется 
+
+#Remove the hub genes themselves:
+neighbor_proteins <- setdiff(
+  all_neighbors,
+  overlap_hubs
+)
+
+#shows all proteins connected to at least one of my hub genes
+length(neighbor_proteins)
+head(neighbor_proteins, 20)
+
+```
+
+# WGCNA hub-centered network
+
+```{r,fig.height=16, fig.width=16}
+#ТУТ РАЗНЫМИ ЦВЕТАМИ ГЕНЫ ИЗ ТОГО ИЛИ ИНОГО КЛАСТЕРА WGCNA, В ЧАНКЕ НИЖЕ ТАМ ЦВЕТА УЖЕ СОГЛАСНО ПРИНАДЛЕЖНОСТИ К ОПРЕДЕЛЕННОМУ GO
+
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+library(WGCNA)
+library(org.Rn.eg.db)
+library(clusterProfiler)
+
+# ============================================================
+# WGCNA hub-centered network
+# Core nodes = WGCNA hub genes
+# Secondary nodes = genes strongly correlated with hubs in WGCNA data
+# STRING-supported genes = black
+# ============================================================
+
+top_hubs_to_plot <- 30
+top_neighbors_per_hub <- 13
+min_wgcna_cor <- 0.6
+
+datExpr <- gsg_human_vs_chimp_vsn_counts
+
+# Gene-module annotation
+gene_module_colors <- blockwisenet$colors
+names(gene_module_colors) <- colnames(datExpr)
+
+module_annotation <- data.frame(
+  gene = colnames(datExpr),
+  module = gene_module_colors
+)
+
+# Add gene symbols
+gene_map <- clusterProfiler::bitr(
+  module_annotation$gene,
+  fromType = "ENSEMBL",
+  toType = "SYMBOL",
+  OrgDb = org.Rn.eg.db
+)
+
+module_annotation <- module_annotation |>
+  dplyr::left_join(
+    gene_map,
+    by = c("gene" = "ENSEMBL")
+  ) |>
+  dplyr::rename(
+    gene_symbol = SYMBOL
+  )
+
+# Select hub genes
+# Recreate hub_core cleanly
+hub_core <- hub_genes |>
+  dplyr::filter(
+    symbol %in% overlap_hubs
+  ) |>
+  dplyr::select(
+    gene,
+    symbol,
+    module,
+    kME,
+    GS_species
+  ) |>
+  dplyr::rename(
+    gene_symbol = symbol
+  )
+
+# colnames(hub_core)
+# head(hub_core)
+hub_gene_ids <- hub_core$gene
+
+# Function: WGCNA-correlated neighbors for one hub
+get_wgcna_neighbors <- function(target_gene, datExpr, n = 50, min_cor = 0.6) {
+  
+  if (!(target_gene %in% colnames(datExpr))) {
+    warning(paste(target_gene, "not found in datExpr"))
+    return(NULL)
+  }
+  
+  cor_vec <- WGCNA::cor(
+    datExpr[, target_gene],
+    datExpr,
+    use = "p",
+    method = "spearman"
+  )
+  
+  cor_vec <- as.numeric(cor_vec)
+  names(cor_vec) <- colnames(datExpr)
+  
+  cor_vec <- cor_vec[!is.na(cor_vec)]
+  cor_vec <- cor_vec[names(cor_vec) != target_gene]
+  cor_vec <- cor_vec[cor_vec >= min_cor]
+  
+  top_neighbors <- sort(cor_vec, decreasing = TRUE)[
+    1:min(n, length(cor_vec))
+  ]
+  
+  data.frame(
+    hub_gene = target_gene,
+    neighbor_gene = names(top_neighbors),
+    wgcna_correlation = as.numeric(top_neighbors)
+  )
+}
+
+# Get neighbors for all hubs
+wgcna_hub_neighbors <- lapply(
+  hub_gene_ids,
+  function(g) {
+    get_wgcna_neighbors(
+      target_gene = g,
+      datExpr = datExpr,
+      n = top_neighbors_per_hub,
+      min_cor = min_wgcna_cor
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+# Add symbols and modules
+wgcna_hub_neighbors <- wgcna_hub_neighbors |>
+  dplyr::left_join(
+    module_annotation |>
+      dplyr::select(
+        hub_gene = gene,
+        hub_symbol = gene_symbol,
+        hub_module = module
+      ),
+    by = "hub_gene"
+  ) |>
+  dplyr::left_join(
+    module_annotation |>
+      dplyr::select(
+        neighbor_gene = gene,
+        neighbor_symbol = gene_symbol,
+        neighbor_module = module
+      ),
+    by = "neighbor_gene"
+  )
+
+# STRING proteins
+string_proteins <- unique(c(
+  string_edges$X.node1,
+  string_edges$node2
+))
+
+# Edges
+edges_plot <- wgcna_hub_neighbors |>
+  dplyr::select(
+    from = hub_gene,
+    to = neighbor_gene,
+    weight = wgcna_correlation
+  )
+
+# Nodes
+nodes_hub <- hub_core |>
+  dplyr::transmute(
+    gene,
+    gene_symbol,
+    module,
+    node_type = "hub"
+  )
+
+nodes_neighbor <- wgcna_hub_neighbors |>
+  dplyr::transmute(
+    gene = neighbor_gene,
+    gene_symbol = neighbor_symbol,
+    module = neighbor_module,
+    node_type = "neighbor"
+  )
+
+nodes_for_plot <- dplyr::bind_rows(
+  nodes_hub,
+  nodes_neighbor
+) |>
+  dplyr::distinct(gene, .keep_all = TRUE) |>
+  dplyr::mutate(
+    is_STRING = gene_symbol %in% string_proteins,
+    label_to_show = dplyr::if_else(
+      !is.na(gene_symbol),
+      gene_symbol,
+      gene
+    )
+  )
+
+# Hub-centered layout
+set.seed(123)
+
+n_hubs <- nrow(nodes_hub)
+
+hub_positions <- nodes_hub |>
+  dplyr::mutate(
+    angle = seq(0, 2 * pi, length.out = n_hubs + 1)[-1],
+    x = 400 * cos(angle),
+    y = 400 * sin(angle)
+  ) |>
+  dplyr::select(gene, x, y)
+
+neighbor_positions <- wgcna_hub_neighbors |>
+  dplyr::left_join(
+    hub_positions |>
+      dplyr::select(hub_gene = gene, hub_x = x, hub_y = y),
+    by = "hub_gene"
+  ) |>
+  dplyr::group_by(hub_gene) |>
+  dplyr::mutate(
+    local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+    local_radius = runif(dplyr::n(), 700, 1300),
+    x = hub_x + local_radius * cos(local_angle),
+    y = hub_y + local_radius * sin(local_angle)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(gene = neighbor_gene, x, y)
+
+node_positions <- dplyr::bind_rows(
+  hub_positions,
+  neighbor_positions
+) |>
+  dplyr::distinct(gene, .keep_all = TRUE)
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::left_join(node_positions, by = "gene")
+
+# Edge coordinates
+edges_plot <- edges_plot |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("from" = "gene")
+  ) |>
+  dplyr::rename(x_from = x, y_from = y) |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("to" = "gene")
+  ) |>
+  dplyr::rename(x_to = x, y_to = y) |>
+  dplyr::filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+
+# Colors and sizes
+module_levels <- unique(nodes_for_plot$module)
+
+module_palette <- colorRampPalette(
+  RColorBrewer::brewer.pal(12, "Set3")
+)(length(module_levels))
+
+names(module_palette) <- module_levels
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::mutate(
+    node_fill = dplyr::case_when(
+      is_STRING ~ "black",
+      node_type == "hub" ~ "red",
+      TRUE ~ module_palette[module]
+    ),
+    node_size = dplyr::case_when(
+      node_type == "hub" ~ 6,
+      is_STRING ~ 4,
+      TRUE ~ 3
+    )
+  )
+
+# Plot
+p_wgcna_string <- ggplot() +
+  geom_segment(
+    data = edges_plot,
+    aes(
+      x = x_from,
+      y = y_from,
+      xend = x_to,
+      yend = y_to,
+      alpha = weight
+    ),
+    color = "grey35",
+    linewidth = 0.3
+  ) +
+  geom_point(
+    data = nodes_for_plot,
+    aes(x = x, y = y),
+    fill = nodes_for_plot$node_fill,
+    size = nodes_for_plot$node_size,
+    shape = 21,
+    color = "white",
+    stroke = 0.3
+  ) +
+  ggrepel::geom_text_repel(
+    data = nodes_for_plot,
+    aes(
+      x = x,
+      y = y,
+      label = label_to_show
+    ),
+    size = 2.7,
+    max.overlaps = Inf,
+    box.padding = 0.35,
+    point.padding = 0.2,
+    segment.color = "grey60",
+    color = "black",
+    na.rm = TRUE
+  ) +
+  coord_equal() +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "grey30")
+  ) +
+  labs(
+    title = "WGCNA hub-centered network",
+    subtitle = "Red = WGCNA hub genes; colored = WGCNA-correlated neighbors; black = STRING-supported genes"
+  )
+
+p_wgcna_string
+
+
+
+
+
+```
+
+```{r}
+#тут получилось близко, но нету названий генов
+# library(dplyr)
+# library(tidyr)
+# library(tibble)
+# library(ggplot2)
+# library(ggrepel)
+# library(RColorBrewer)
+# library(WGCNA)
+# library(org.Rn.eg.db)
+# library(clusterProfiler)
+# 
+# # ============================================================
+# # WGCNA hub-centered network with GO legend on the right
+# # Core nodes = WGCNA hub genes
+# # Neighbor nodes = WGCNA-correlated genes
+# # Fill color = GO biological process
+# # Red border = hub gene
+# # Black node = STRING-supported gene
+# # ============================================================
+# 
+# set.seed(123)
+# 
+# top_neighbors_per_hub <- 13
+# min_wgcna_cor <- 0.6
+# 
+# datExpr <- gsg_human_vs_chimp_vsn_counts
+# 
+# # ----------------------------
+# # 1. Gene-module annotation
+# # ----------------------------
+# 
+# gene_module_colors <- blockwisenet$colors
+# names(gene_module_colors) <- colnames(datExpr)
+# 
+# module_annotation <- data.frame(
+#   gene = colnames(datExpr),
+#   module = gene_module_colors
+# )
+# 
+# gene_map <- clusterProfiler::bitr(
+#   module_annotation$gene,
+#   fromType = "ENSEMBL",
+#   toType = "SYMBOL",
+#   OrgDb = org.Rn.eg.db
+# )
+# 
+# module_annotation <- module_annotation |>
+#   dplyr::left_join(
+#     gene_map,
+#     by = c("gene" = "ENSEMBL")
+#   ) |>
+#   dplyr::rename(
+#     gene_symbol = SYMBOL
+#   )
+# 
+# # ----------------------------
+# # 2. Hub genes
+# # ----------------------------
+# 
+# hub_core <- hub_genes |>
+#   dplyr::filter(symbol %in% overlap_hubs) |>
+#   dplyr::select(
+#     gene,
+#     symbol,
+#     module,
+#     kME,
+#     GS_species
+#   ) |>
+#   dplyr::rename(
+#     gene_symbol = symbol
+#   )
+# 
+# hub_gene_ids <- hub_core$gene
+# 
+# # ----------------------------
+# # 3. Function: WGCNA neighbors
+# # ----------------------------
+# 
+# get_wgcna_neighbors <- function(target_gene, datExpr, n = 50, min_cor = 0.6) {
+#   
+#   if (!(target_gene %in% colnames(datExpr))) {
+#     warning(paste(target_gene, "not found in datExpr"))
+#     return(NULL)
+#   }
+#   
+#   cor_vec <- WGCNA::cor(
+#     datExpr[, target_gene],
+#     datExpr,
+#     use = "p",
+#     method = "spearman"
+#   )
+#   
+#   cor_vec <- as.numeric(cor_vec)
+#   names(cor_vec) <- colnames(datExpr)
+#   
+#   cor_vec <- cor_vec[!is.na(cor_vec)]
+#   cor_vec <- cor_vec[names(cor_vec) != target_gene]
+#   cor_vec <- cor_vec[cor_vec >= min_cor]
+#   
+#   top_neighbors <- sort(cor_vec, decreasing = TRUE)[
+#     1:min(n, length(cor_vec))
+#   ]
+#   
+#   data.frame(
+#     hub_gene = target_gene,
+#     neighbor_gene = names(top_neighbors),
+#     wgcna_correlation = as.numeric(top_neighbors)
+#   )
+# }
+# 
+# # ----------------------------
+# # 4. Get WGCNA neighbors
+# # ----------------------------
+# 
+# wgcna_hub_neighbors <- lapply(
+#   hub_gene_ids,
+#   function(g) {
+#     get_wgcna_neighbors(
+#       target_gene = g,
+#       datExpr = datExpr,
+#       n = top_neighbors_per_hub,
+#       min_cor = min_wgcna_cor
+#     )
+#   }
+# ) |>
+#   dplyr::bind_rows()
+# 
+# wgcna_hub_neighbors <- wgcna_hub_neighbors |>
+#   dplyr::left_join(
+#     module_annotation |>
+#       dplyr::select(
+#         hub_gene = gene,
+#         hub_symbol = gene_symbol,
+#         hub_module = module
+#       ),
+#     by = "hub_gene"
+#   ) |>
+#   dplyr::left_join(
+#     module_annotation |>
+#       dplyr::select(
+#         neighbor_gene = gene,
+#         neighbor_symbol = gene_symbol,
+#         neighbor_module = module
+#       ),
+#     by = "neighbor_gene"
+#   )
+# 
+# # ----------------------------
+# # 5. GO enrichment for hub genes
+# # ----------------------------
+# 
+# hub_GO <- enrichGO(
+#   gene = hub_gene_ids,
+#   OrgDb = org.Rn.eg.db,
+#   keyType = "ENSEMBL",
+#   ont = "BP",
+#   pAdjustMethod = "BH",
+#   pvalueCutoff = 0.05,
+#   qvalueCutoff = 0.05,
+#   readable = FALSE
+# )
+# 
+# hub_GO_simplified <- clusterProfiler::simplify(
+#   hub_GO,
+#   cutoff = 0.7,
+#   by = "p.adjust",
+#   select_fun = min
+# )
+# 
+# hub_GO_df <- as.data.frame(hub_GO_simplified)
+# 
+# hub_gene_GO_annotation <- hub_GO_df |>
+#   dplyr::arrange(p.adjust) |>
+#   tidyr::separate_rows(geneID, sep = "/") |>
+#   dplyr::rename(gene = geneID) |>
+#   dplyr::group_by(gene) |>
+#   dplyr::slice_head(n = 1) |>
+#   dplyr::ungroup() |>
+#   dplyr::transmute(
+#     gene,
+#     GO_process = Description,
+#     GO_padj = p.adjust,
+#     main_GO_process = Description
+#   )
+# 
+# # ----------------------------
+# # 6. GO enrichment for neighbor genes
+# # ----------------------------
+# 
+# neighbor_gene_ids <- wgcna_hub_neighbors |>
+#   dplyr::pull(neighbor_gene) |>
+#   unique()
+# 
+# neighbor_GO <- enrichGO(
+#   gene = neighbor_gene_ids,
+#   OrgDb = org.Rn.eg.db,
+#   keyType = "ENSEMBL",
+#   ont = "BP",
+#   pAdjustMethod = "BH",
+#   pvalueCutoff = 0.05,
+#   qvalueCutoff = 0.05,
+#   readable = FALSE
+# )
+# 
+# neighbor_GO_simplified <- clusterProfiler::simplify(
+#   neighbor_GO,
+#   cutoff = 0.7,
+#   by = "p.adjust",
+#   select_fun = min
+# )
+# 
+# neighbor_GO_df <- as.data.frame(neighbor_GO_simplified)
+# 
+# neighbor_gene_GO_annotation <- neighbor_GO_df |>
+#   dplyr::arrange(p.adjust) |>
+#   tidyr::separate_rows(geneID, sep = "/") |>
+#   dplyr::rename(gene = geneID) |>
+#   dplyr::group_by(gene) |>
+#   dplyr::slice_head(n = 1) |>
+#   dplyr::ungroup() |>
+#   dplyr::transmute(
+#     gene,
+#     GO_process = Description,
+#     GO_padj = p.adjust,
+#     main_GO_process = Description
+#   )
+# 
+# # ----------------------------
+# # 7. STRING-supported proteins
+# # ----------------------------
+# 
+# string_proteins <- unique(c(
+#   string_edges$X.node1,
+#   string_edges$node2
+# ))
+# 
+# # ----------------------------
+# # 8. Edges
+# # ----------------------------
+# 
+# edges_base <- wgcna_hub_neighbors |>
+#   dplyr::select(
+#     from = hub_gene,
+#     to = neighbor_gene,
+#     weight = wgcna_correlation
+#   ) |>
+#   dplyr::distinct()
+# 
+# # ----------------------------
+# # 9. Nodes with GO annotation
+# # ----------------------------
+# 
+# nodes_hub <- hub_core |>
+#   dplyr::transmute(
+#     gene,
+#     gene_symbol,
+#     module,
+#     node_type = "hub"
+#   ) |>
+#   dplyr::left_join(
+#     hub_gene_GO_annotation,
+#     by = "gene"
+#   )
+# 
+# nodes_neighbor <- wgcna_hub_neighbors |>
+#   dplyr::transmute(
+#     gene = neighbor_gene,
+#     gene_symbol = neighbor_symbol,
+#     module = neighbor_module,
+#     node_type = "neighbor"
+#   ) |>
+#   dplyr::left_join(
+#     neighbor_gene_GO_annotation,
+#     by = "gene"
+#   )
+# 
+# nodes_for_plot <- dplyr::bind_rows(
+#   nodes_hub,
+#   nodes_neighbor
+# ) |>
+#   dplyr::distinct(gene, .keep_all = TRUE) |>
+#   dplyr::mutate(
+#     main_GO_process = dplyr::case_when(
+#       node_type == "hub" ~ "Hub genes",
+#       !is.na(main_GO_process) ~ main_GO_process,
+#       TRUE ~ "No GO annotation"
+#     ),
+#     GO_process = main_GO_process,
+#     is_STRING = gene_symbol %in% string_proteins,
+#     label_to_show = dplyr::if_else(
+#       !is.na(gene_symbol),
+#       gene_symbol,
+#       gene
+#     )
+#   )
+# 
+# # ----------------------------
+# # 10. Layout
+# # ----------------------------
+# 
+# hub_positions <- nodes_for_plot |>
+#   dplyr::filter(node_type == "hub") |>
+#   dplyr::mutate(
+#     x = rnorm(dplyr::n(), mean = 0, sd = 220),
+#     y = rnorm(dplyr::n(), mean = 0, sd = 220)
+#   ) |>
+#   dplyr::select(gene, x, y)
+# 
+# GO_levels <- nodes_for_plot |>
+#   dplyr::filter(node_type == "neighbor") |>
+#   dplyr::pull(main_GO_process) |>
+#   unique()
+# 
+# GO_centers <- data.frame(
+#   main_GO_process = GO_levels,
+#   center_x = 2600 * cos(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1]),
+#   center_y = 2600 * sin(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1])
+# )
+# 
+# neighbor_positions <- nodes_for_plot |>
+#   dplyr::filter(node_type == "neighbor") |>
+#   dplyr::left_join(GO_centers, by = "main_GO_process") |>
+#   dplyr::group_by(main_GO_process) |>
+#   dplyr::mutate(
+#     local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+#     local_radius = runif(dplyr::n(), 120, 650),
+#     x = center_x + local_radius * cos(local_angle),
+#     y = center_y + local_radius * sin(local_angle)
+#   ) |>
+#   dplyr::ungroup() |>
+#   dplyr::select(gene, x, y)
+# 
+# node_positions <- dplyr::bind_rows(
+#   hub_positions,
+#   neighbor_positions
+# ) |>
+#   dplyr::distinct(gene, .keep_all = TRUE)
+# 
+# nodes_for_plot <- nodes_for_plot |>
+#   dplyr::left_join(
+#     node_positions,
+#     by = "gene"
+#   )
+# 
+# stopifnot(all(c("x", "y") %in% colnames(nodes_for_plot)))
+# 
+# # ----------------------------
+# # 11. Edge coordinates
+# # ----------------------------
+# 
+# edges_plot <- edges_base |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("from" = "gene")
+#   ) |>
+#   dplyr::rename(
+#     x_from = x,
+#     y_from = y
+#   ) |>
+#   dplyr::left_join(
+#     nodes_for_plot |> dplyr::select(gene, x, y),
+#     by = c("to" = "gene")
+#   ) |>
+#   dplyr::rename(
+#     x_to = x,
+#     y_to = y
+#   ) |>
+#   dplyr::filter(
+#     !is.na(x_from),
+#     !is.na(y_from),
+#     !is.na(x_to),
+#     !is.na(y_to)
+#   )
+# 
+# # ----------------------------
+# # 12. Colors
+# # ----------------------------
+# 
+# GO_color_levels <- unique(nodes_for_plot$main_GO_process)
+# 
+# GO_palette <- colorRampPalette(
+#   RColorBrewer::brewer.pal(12, "Set3")
+# )(length(GO_color_levels))
+# 
+# names(GO_palette) <- GO_color_levels
+# 
+# GO_palette["Hub genes"] <- "red"
+# GO_palette["No GO annotation"] <- "grey75"
+# 
+# # ----------------------------
+# # 13. Gene labels
+# # ----------------------------
+# 
+# gene_labels <- nodes_for_plot |>
+#   dplyr::filter(node_type == "hub" | is_STRING)
+# 
+# # ----------------------------
+# # 14. Plot
+# # ----------------------------
+# 
+# p_wgcna_go <- ggplot() +
+# 
+#   geom_segment(
+#     data = edges_plot,
+#     aes(
+#       x = x_from,
+#       y = y_from,
+#       xend = x_to,
+#       yend = y_to,
+#       alpha = weight
+#     ),
+#     color = "grey35",
+#     linewidth = 0.3,
+#     show.legend = FALSE
+#   ) +
+# 
+#   geom_point(
+#     data = nodes_for_plot,
+#     aes(
+#       x = x,
+#       y = y,
+#       fill = main_GO_process,
+#       size = node_type
+#     ),
+#     shape = 21,
+#     color = "white",
+#     stroke = 0.3,
+#     alpha = 0.95
+#   ) +
+# 
+#   geom_point(
+#     data = nodes_for_plot |> dplyr::filter(is_STRING),
+#     aes(x = x, y = y),
+#     fill = "black",
+#     shape = 21,
+#     color = "white",
+#     size = 4.5,
+#     stroke = 0.3,
+#     show.legend = FALSE
+#   ) +
+# 
+#   ggrepel::geom_text_repel(
+#     data = gene_labels,
+#     aes(
+#       x = x,
+#       y = y,
+#       label = label_to_show
+#     ),
+#     size = 2.7,
+#     max.overlaps = Inf,
+#     box.padding = 0.35,
+#     point.padding = 0.2,
+#     segment.color = "grey60",
+#     color = "black",
+#     na.rm = TRUE,
+#     show.legend = FALSE
+#   ) +
+# 
+#   scale_fill_manual(
+#     values = GO_palette,
+#     name = "GO biological process"
+#   ) +
+# 
+#   scale_size_manual(
+#     values = c(
+#       hub = 6,
+#       neighbor = 3
+#     ),
+#     name = "Node type"
+#   ) +
+# 
+#   guides(
+#     fill = guide_legend(
+#       override.aes = list(size = 5),
+#       ncol = 1
+#     ),
+#     size = guide_legend(
+#       override.aes = list(fill = "grey80")
+#     )
+#   ) +
+# 
+#   coord_equal() +
+# 
+#   theme_void() +
+# 
+#   theme(
+#     legend.position = "right",
+#     legend.title = element_text(size = 11, face = "bold"),
+#     legend.text = element_text(size = 8),
+#     plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+#     plot.subtitle = element_text(size = 11, hjust = 0.5, color = "grey30")
+#   ) +
+# 
+#   labs(
+#     title = "WGCNA hub-centered network grouped by GO enrichment",
+#     subtitle = "Fill color = GO biological process; red = hub genes; black = STRING-supported genes"
+#   )
+# 
+# p_wgcna_go
+```
+
+## Отсортированный WGCNA hub-centered network
+
+```{r,fig.height=16, fig.width=16}
+
+#ВОТ ТУТ ПОЛУЧИЛОСЬ ЧТО НУЖНО
+#отсортированный(согласно GO), WGCNA hub-centered network
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+library(WGCNA)
+library(org.Rn.eg.db)
+library(clusterProfiler)
+
+# ============================================================
+# WGCNA hub-centered network with GO grouping
+# Core nodes = WGCNA hub genes
+# Neighbor nodes = WGCNA-correlated genes
+# Color = GO biological process
+# Red border = hub gene
+# Black border = STRING-supported gene
+# ============================================================
+
+top_neighbors_per_hub <- 13
+min_wgcna_cor <- 0.6
+
+datExpr <- gsg_human_vs_chimp_vsn_counts
+
+# ----------------------------
+# 1. Gene-module annotation
+# ----------------------------
+
+gene_module_colors <- blockwisenet$colors
+names(gene_module_colors) <- colnames(datExpr)
+
+module_annotation <- data.frame(
+  gene = colnames(datExpr),
+  module = gene_module_colors
+)
+
+gene_map <- clusterProfiler::bitr(
+  module_annotation$gene,
+  fromType = "ENSEMBL",
+  toType = "SYMBOL",
+  OrgDb = org.Rn.eg.db
+)
+
+module_annotation <- module_annotation |>
+  dplyr::left_join(gene_map, by = c("gene" = "ENSEMBL")) |>
+  dplyr::rename(gene_symbol = SYMBOL)
+
+# ----------------------------
+# 2. Hub genes
+# ----------------------------
+
+hub_core <- hub_genes |>
+  dplyr::filter(symbol %in% overlap_hubs) |>
+  dplyr::select(gene, symbol, module, kME, GS_species) |>
+  dplyr::rename(gene_symbol = symbol)
+
+hub_gene_ids <- hub_core$gene
+
+# ----------------------------
+# 3. Function: WGCNA neighbors
+# ----------------------------
+
+get_wgcna_neighbors <- function(target_gene, datExpr, n = 50, min_cor = 0.6) {
+  
+  if (!(target_gene %in% colnames(datExpr))) {
+    warning(paste(target_gene, "not found in datExpr"))
+    return(NULL)
+  }
+  
+  cor_vec <- WGCNA::cor(
+    datExpr[, target_gene],
+    datExpr,
+    use = "p",
+    method = "spearman"
+  )
+  
+  cor_vec <- as.numeric(cor_vec)
+  names(cor_vec) <- colnames(datExpr)
+  
+  cor_vec <- cor_vec[!is.na(cor_vec)]
+  cor_vec <- cor_vec[names(cor_vec) != target_gene]
+  cor_vec <- cor_vec[cor_vec >= min_cor]
+  
+  top_neighbors <- sort(cor_vec, decreasing = TRUE)[
+    1:min(n, length(cor_vec))
+  ]
+  
+  data.frame(
+    hub_gene = target_gene,
+    neighbor_gene = names(top_neighbors),
+    wgcna_correlation = as.numeric(top_neighbors)
+  )
+}
+
+# ----------------------------
+# 4. Get WGCNA neighbors
+# ----------------------------
+
+wgcna_hub_neighbors <- lapply(
+  hub_gene_ids,
+  function(g) {
+    get_wgcna_neighbors(
+      target_gene = g,
+      datExpr = datExpr,
+      n = top_neighbors_per_hub,
+      min_cor = min_wgcna_cor
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+wgcna_hub_neighbors <- wgcna_hub_neighbors |>
+  dplyr::left_join(
+    module_annotation |>
+      dplyr::select(
+        hub_gene = gene,
+        hub_symbol = gene_symbol,
+        hub_module = module
+      ),
+    by = "hub_gene"
+  ) |>
+  dplyr::left_join(
+    module_annotation |>
+      dplyr::select(
+        neighbor_gene = gene,
+        neighbor_symbol = gene_symbol,
+        neighbor_module = module
+      ),
+    by = "neighbor_gene"
+  )
+
+# ----------------------------
+# 5. GO enrichment for hub genes
+# ----------------------------
+
+hub_GO <- enrichGO(
+  gene = hub_gene_ids,
+  OrgDb = org.Rn.eg.db,
+  keyType = "ENSEMBL",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05,
+  readable = FALSE
+)
+
+hub_GO_simplified <- clusterProfiler::simplify(
+  hub_GO,
+  cutoff = 0.7,
+  by = "p.adjust",
+  select_fun = min
+)
+
+hub_GO_df <- as.data.frame(hub_GO_simplified)
+
+hub_gene_GO_annotation <- hub_GO_df |>
+  dplyr::arrange(p.adjust) |>
+  tidyr::separate_rows(geneID, sep = "/") |>
+  dplyr::rename(gene = geneID) |>
+  dplyr::group_by(gene) |>
+  dplyr::slice_head(n = 1) |>
+  dplyr::ungroup() |>
+  dplyr::transmute(
+    gene,
+    GO_process = Description,
+    GO_padj = p.adjust,
+    main_GO_process = Description
+  )
+
+# ----------------------------
+# 6. GO enrichment for neighbor genes
+# ----------------------------
+
+neighbor_gene_ids <- wgcna_hub_neighbors |>
+  dplyr::pull(neighbor_gene) |>
+  unique()
+
+neighbor_GO <- enrichGO(
+  gene = neighbor_gene_ids,
+  OrgDb = org.Rn.eg.db,
+  keyType = "ENSEMBL",
+  ont = "BP",
+  pAdjustMethod = "BH",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05,
+  readable = FALSE
+)
+
+neighbor_GO_simplified <- clusterProfiler::simplify(
+  neighbor_GO,
+  cutoff = 0.7,
+  by = "p.adjust",
+  select_fun = min
+)
+
+neighbor_GO_df <- as.data.frame(neighbor_GO_simplified)
+
+neighbor_gene_GO_annotation <- neighbor_GO_df |>
+  dplyr::arrange(p.adjust) |>
+  tidyr::separate_rows(geneID, sep = "/") |>
+  dplyr::rename(gene = geneID) |>
+  dplyr::group_by(gene) |>
+  dplyr::slice_head(n = 1) |>
+  dplyr::ungroup() |>
+  dplyr::transmute(
+    gene,
+    GO_process = Description,
+    GO_padj = p.adjust,
+    main_GO_process = Description
+  )
+
+# ----------------------------
+# 7. STRING-supported proteins
+# ----------------------------
+
+string_proteins <- unique(c(
+  string_edges$X.node1,
+  string_edges$node2
+))
+
+# ----------------------------
+# 8. Edges
+# ----------------------------
+
+edges_plot <- wgcna_hub_neighbors |>
+  dplyr::select(
+    from = hub_gene,
+    to = neighbor_gene,
+    weight = wgcna_correlation
+  )
+
+# ----------------------------
+# 9. Nodes with GO annotation
+# ----------------------------
+
+nodes_hub <- hub_core |>
+  dplyr::transmute(
+    gene,
+    gene_symbol,
+    module,
+    node_type = "hub"
+  ) |>
+  dplyr::left_join(
+    hub_gene_GO_annotation,
+    by = "gene"
+  )
+
+nodes_neighbor <- wgcna_hub_neighbors |>
+  dplyr::transmute(
+    gene = neighbor_gene,
+    gene_symbol = neighbor_symbol,
+    module = neighbor_module,
+    node_type = "neighbor"
+  ) |>
+  dplyr::left_join(
+    neighbor_gene_GO_annotation,
+    by = "gene"
+  )
+
+nodes_for_plot <- dplyr::bind_rows(
+  nodes_hub,
+  nodes_neighbor
+) |>
+  dplyr::distinct(gene, .keep_all = TRUE) |>
+  dplyr::mutate(
+    GO_process = dplyr::if_else(
+      is.na(GO_process),
+      "No_GO_annotation",
+      GO_process
+    ),
+    main_GO_process = dplyr::if_else(
+      is.na(main_GO_process),
+      "No_GO_annotation",
+      main_GO_process
+    ),
+    is_STRING = gene_symbol %in% string_proteins,
+    label_to_show = dplyr::if_else(
+      !is.na(gene_symbol),
+      gene_symbol,
+      gene
+    )
+  )
+
+# ----------------------------
+# 10. Layout: hubs center, neighbors grouped by GO
+# ----------------------------
+
+set.seed(123)
+
+n_hubs <- nrow(nodes_hub)
+
+hub_positions <- nodes_hub |>
+  dplyr::mutate(
+    angle = seq(0, 2 * pi, length.out = n_hubs + 1)[-1],
+    x = 400 * cos(angle),
+    y = 400 * sin(angle)
+  ) |>
+  dplyr::select(gene, x, y)
+
+go_centers <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::distinct(main_GO_process) |>
+  dplyr::mutate(
+    go_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+    go_x = 1800 * cos(go_angle),
+    go_y = 1800 * sin(go_angle)
+  )
+
+neighbor_positions <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::left_join(go_centers, by = "main_GO_process") |>
+  dplyr::group_by(main_GO_process) |>
+  dplyr::mutate(
+    local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+    local_radius = runif(dplyr::n(), 100, 500),
+    x = go_x + local_radius * cos(local_angle),
+    y = go_y + local_radius * sin(local_angle)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(gene, x, y)
+
+node_positions <- dplyr::bind_rows(
+  hub_positions,
+  neighbor_positions
+) |>
+  dplyr::distinct(gene, .keep_all = TRUE)
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::select(-dplyr::any_of(c("x", "y"))) |>
+  dplyr::left_join(
+    node_positions,
+    by = "gene"
+  )
+
+stopifnot(all(c("x", "y") %in% colnames(nodes_for_plot)))
+
+# ----------------------------
+# 11. Edge coordinates
+# ----------------------------
+
+edges_plot <- edges_plot |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("from" = "gene")
+  ) |>
+  dplyr::rename(
+    x_from = x,
+    y_from = y
+  ) |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("to" = "gene")
+  ) |>
+  dplyr::rename(
+    x_to = x,
+    y_to = y
+  ) |>
+  dplyr::filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+
+# ----------------------------
+# 12. Colors and sizes
+# ----------------------------
+
+GO_levels <- unique(nodes_for_plot$main_GO_process)
+
+GO_palette <- colorRampPalette(
+  RColorBrewer::brewer.pal(12, "Set3")
+)(length(GO_levels))
+
+names(GO_palette) <- GO_levels
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::mutate(
+    node_fill = GO_palette[main_GO_process],
+    node_border = dplyr::case_when(
+      node_type == "hub" ~ "red",
+      is_STRING ~ "black",
+      TRUE ~ "white"
+    ),
+    node_size = dplyr::case_when(
+      node_type == "hub" ~ 7,
+      is_STRING ~ 4,
+      TRUE ~ 3
+    )
+  )
+
+# ----------------------------
+# 13. GO cluster labels
+# ----------------------------
+
+cluster_labels <- nodes_for_plot |>
+  dplyr::filter(!is.na(x), !is.na(y)) |>
+  dplyr::group_by(main_GO_process) |>
+  dplyr::summarise(
+    label_x = mean(x, na.rm = TRUE),
+    label_y = max(y, na.rm = TRUE) + 180,
+    n_genes = dplyr::n(),
+    .groups = "drop"
+  )
+
+# ----------------------------
+# 14. Plot
+# ----------------------------
+
+p_wgcna_go <- ggplot() +
+  geom_segment(
+    data = edges_plot,
+    aes(
+      x = x_from,
+      y = y_from,
+      xend = x_to,
+      yend = y_to,
+      alpha = weight
+    ),
+    color = "grey35",
+    linewidth = 0.3
+  ) +
+  geom_point(
+    data = nodes_for_plot,
+    aes(x = x, y = y),
+    fill = nodes_for_plot$node_fill,
+    color = nodes_for_plot$node_border,
+    size = nodes_for_plot$node_size,
+    shape = 21,
+    stroke = 0.7
+  ) +
+  geom_text(
+    data = cluster_labels,
+    aes(
+      x = label_x,
+      y = label_y,
+      label = paste0(
+        main_GO_process,
+        "\n",
+        n_genes,
+        " genes"
+      )
+    ),
+    size = 3.2,
+    fontface = "bold",
+    color = "black",
+    lineheight = 0.9
+  ) +
+  ggrepel::geom_text_repel(
+    data = nodes_for_plot,
+    aes(
+      x = x,
+      y = y,
+      label = label_to_show
+    ),
+    size = 2.7,
+    max.overlaps = Inf,
+    box.padding = 0.35,
+    point.padding = 0.2,
+    segment.color = "grey60",
+    color = "black",
+    na.rm = TRUE
+  ) +
+  coord_equal() +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(
+      size = 18,
+      face = "bold",
+      hjust = 0.5
+    ),
+    plot.subtitle = element_text(
+      size = 11,
+      hjust = 0.5,
+      color = "grey30"
+    )
+  ) +
+  labs(
+    title = "WGCNA hub-centered network grouped by GO enrichment",
+    subtitle = "Fill color = GO process; red border = WGCNA hub; black border = STRING-supported gene"
+  )
+
+p_wgcna_go
+```
+
+## Genes that received No_GO_annotation in the network
+
+```{r}
+# ============================================================
+# Genes that received No_GO_annotation in the network
+# Retrieve all Biological Process GO annotations for them
+# ============================================================
+
+library(dplyr)
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+library(GO.db)
+
+# ----------------------------
+# 1. Extract genes that were labelled No_GO_annotation
+# ----------------------------
+
+no_go_genes_tbl <- nodes_for_plot |>
+  dplyr::filter(main_GO_process == "No_GO_annotation") |>
+  dplyr::select(
+    gene,
+    gene_symbol,
+    module,
+    node_type,
+    is_STRING
+  ) |>
+  dplyr::distinct()
+
+# ----------------------------
+# 2. Retrieve GO annotations from org.Rn.eg.db
+# ----------------------------
+
+no_go_direct_GO <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = no_go_genes_tbl$gene,
+  keytype = "ENSEMBL",
+  columns = c(
+    "ENSEMBL",
+    "SYMBOL",
+    "GO",
+    "ONTOLOGY",
+    "EVIDENCE"
+  )
+) |>
+  dplyr::filter(
+    ONTOLOGY == "BP",
+    !is.na(GO)
+  ) |>
+  dplyr::rename(
+    gene = ENSEMBL,
+    gene_symbol_db = SYMBOL,
+    GO_ID = GO,
+    GO_ontology = ONTOLOGY,
+    GO_evidence = EVIDENCE
+  )
+
+# ----------------------------
+# 3. Add GO term names
+# ----------------------------
+
+no_go_direct_GO <- no_go_direct_GO |>
+  dplyr::mutate(
+    GO_term = AnnotationDbi::Term(
+      GO.db::GOTERM[GO_ID]
+    )
+  )
+
+# ----------------------------
+# 4. Collapse GO terms per gene
+# ----------------------------
+
+no_go_GO_summary <- no_go_direct_GO |>
+  dplyr::group_by(
+    gene,
+    gene_symbol_db
+  ) |>
+  dplyr::summarise(
+    n_BP_GO_terms = dplyr::n_distinct(GO_ID),
+    BP_GO_terms = paste(
+      unique(GO_term),
+      collapse = " | "
+    ),
+    BP_GO_IDs = paste(
+      unique(GO_ID),
+      collapse = " | "
+    ),
+    .groups = "drop"
+  ) |>
+  dplyr::left_join(
+    no_go_genes_tbl,
+    by = "gene"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(n_BP_GO_terms)
+  )
+
+# ----------------------------
+# 5. Inspect results
+# ----------------------------
+
+View(no_go_GO_summary)
+
+head(no_go_GO_summary)
+
+nrow(no_go_GO_summary)
+```
+
+# Autoencoder-WGCNA hub-centered network
+
+```{r,fig.height=16, fig.width=16}
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+library(GO.db)
+
+set.seed(123)
+
+# ============================================================
+# WGCNA hub-centered network with GO fallback annotation
+# ============================================================
+
+# 1. Clean nodes
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::select(
+    -dplyr::any_of(c(
+      "GO_process", "x", "y",
+      "x.x", "y.x", "x.y", "y.y",
+      "node_fill", "node_size"
+    ))
+  )
+
+# 2. Get full GO BP annotations for all plotted genes
+all_symbols <- nodes_for_plot |>
+  dplyr::pull(gene_symbol) |>
+  unique() |>
+  na.omit()
+
+GO_full <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = all_symbols,
+  keytype = "SYMBOL",
+  columns = c("SYMBOL", "GO", "ONTOLOGY")
+) |>
+  dplyr::filter(
+    !is.na(GO),
+    ONTOLOGY == "BP"
+  )
+
+GO_terms <- AnnotationDbi::select(
+  GO.db,
+  keys = unique(GO_full$GO),
+  keytype = "GOID",
+  columns = "TERM"
+)
+
+GO_full_named <- GO_full |>
+  dplyr::left_join(
+    GO_terms,
+    by = c("GO" = "GOID")
+  ) |>
+  dplyr::filter(!is.na(TERM))
+
+# 3. Choose one GO Biological Process per gene
+gene_GO_fallback <- GO_full_named |>
+  dplyr::group_by(SYMBOL) |>
+  dplyr::summarise(
+    GO_process = dplyr::first(TERM),
+    .groups = "drop"
+  )
+
+# 4. Add GO annotation to nodes
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::left_join(
+    gene_GO_fallback,
+    by = c("gene_symbol" = "SYMBOL")
+  ) |>
+  dplyr::mutate(
+    GO_process = dplyr::case_when(
+      node_type == "hub" ~ "Hub genes",
+      !is.na(GO_process) ~ GO_process,
+      TRUE ~ "No GO annotation"
+    )
+  )
+
+# 5. Hub positions: compact central cloud
+hub_positions <- nodes_for_plot |>
+  dplyr::filter(node_type == "hub") |>
+  dplyr::mutate(
+    x = rnorm(dplyr::n(), mean = 0, sd = 220),
+    y = rnorm(dplyr::n(), mean = 0, sd = 220)
+  ) |>
+  dplyr::select(gene, x, y)
+
+# 6. GO centers for neighbors
+GO_levels <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::pull(GO_process) |>
+  unique()
+
+GO_centers <- data.frame(
+  GO_process = GO_levels,
+  center_x = 2600 * cos(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1]),
+  center_y = 2600 * sin(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1])
+)
+
+# 7. Neighbor positions around GO centers
+neighbor_positions <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::left_join(GO_centers, by = "GO_process") |>
+  dplyr::group_by(GO_process) |>
+  dplyr::mutate(
+    local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+    local_radius = runif(dplyr::n(), 120, 650),
+    x = center_x + local_radius * cos(local_angle),
+    y = center_y + local_radius * sin(local_angle)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(gene, x, y)
+
+# 8. Attach coordinates
+node_positions <- dplyr::bind_rows(
+  hub_positions,
+  neighbor_positions
+) |>
+  dplyr::distinct(gene, .keep_all = TRUE)
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::left_join(node_positions, by = "gene")
+
+# Safety check
+sum(is.na(nodes_for_plot$x) | is.na(nodes_for_plot$y))
+
+# 9. Edges
+edges_base <- wgcna_hub_neighbors |>
+  dplyr::select(
+    from = hub_gene,
+    to = neighbor_gene,
+    weight = wgcna_correlation
+  ) |>
+  dplyr::distinct()
+
+edges_plot <- edges_base |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("from" = "gene")
+  ) |>
+  dplyr::rename(x_from = x, y_from = y) |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("to" = "gene")
+  ) |>
+  dplyr::rename(x_to = x, y_to = y) |>
+  dplyr::filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+
+# 10. Colors
+GO_color_levels <- unique(nodes_for_plot$GO_process)
+
+GO_palette <- colorRampPalette(
+  RColorBrewer::brewer.pal(12, "Set3")
+)(length(GO_color_levels))
+
+names(GO_palette) <- GO_color_levels
+GO_palette["Hub genes"] <- "red"
+GO_palette["No GO annotation"] <- "grey75"
+
+# 11. Cluster labels
+cluster_labels <- nodes_for_plot |>
+  dplyr::group_by(GO_process) |>
+  dplyr::summarise(
+    label_x = mean(x, na.rm = TRUE),
+    label_y = max(y, na.rm = TRUE) + 180,
+    n_genes = dplyr::n(),
+    .groups = "drop"
+  )
+
+# 12. Plot
+p_wgcna_string <- ggplot() +
+  geom_segment(
+    data = edges_plot,
+    aes(
+      x = x_from,
+      y = y_from,
+      xend = x_to,
+      yend = y_to,
+      alpha = weight
+    ),
+    color = "grey35",
+    linewidth = 0.3,
+    show.legend = FALSE
+  ) +
+  geom_point(
+    data = nodes_for_plot,
+    aes(
+      x = x,
+      y = y,
+      fill = GO_process,
+      size = node_type
+    ),
+    shape = 21,
+    color = "white",
+    stroke = 0.3,
+    alpha = 0.95
+  ) +
+  geom_point(
+    data = nodes_for_plot |> dplyr::filter(is_STRING),
+    aes(x = x, y = y),
+    fill = "black",
+    shape = 21,
+    color = "white",
+    size = 4.5,
+    stroke = 0.3,
+    show.legend = FALSE
+  ) +
+  ggrepel::geom_text_repel(
+    data = nodes_for_plot,
+    aes(
+      x = x,
+      y = y,
+      label = label_to_show
+    ),
+    size = 2.7,
+    max.overlaps = Inf,
+    box.padding = 0.35,
+    point.padding = 0.2,
+    segment.color = "grey60",
+    color = "black",
+    na.rm = TRUE,
+    show.legend = FALSE
+  ) +
+  geom_text(
+    data = cluster_labels,
+    aes(
+      x = label_x,
+      y = label_y,
+      label = paste0(GO_process, "\n", n_genes, " genes")
+    ),
+    size = 3,
+    fontface = "bold",
+    lineheight = 0.9,
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(
+    values = GO_palette,
+    name = "GO process"
+  ) +
+  scale_size_manual(
+    values = c(
+      hub = 6,
+      neighbor = 3
+    ),
+    name = "Node type"
+  ) +
+  coord_equal() +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 11, hjust = 0.5, color = "grey30")
+  ) +
+  labs(
+    title = "WGCNA hub-centered network",
+    subtitle = "Center = WGCNA hub genes; outer clusters = WGCNA-correlated genes grouped by GO Biological Process; black = present in STRING"
+  )
+
+p_wgcna_string
+```
+
+```{r}
+# Latent-space hub-neighbor network grouped by GO Biological Process
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(RColorBrewer)
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+library(GO.db)
+library(png)
+library(grid)
+
+set.seed(123)
+
+top_neighbors_per_hub <- 15
+min_similarity <- 0.7
+
+# 1. Hub genes
+hub_gene_ids <- hub_core$gene
+
+# 2. Latent-space cosine similarity neighbors
+get_top_neighbors_latent <- function(target_gene,
+                                     latent,
+                                     n = 15,
+                                     min_similarity = NULL) {
+  
+  if (!(target_gene %in% rownames(latent))) {
+    warning(paste(target_gene, "not found in latent"))
+    return(NULL)
+  }
+  
+  candidate_genes <- rownames(latent)
+  candidate_genes <- candidate_genes[candidate_genes != target_gene]
+  
+  target_vec <- as.numeric(latent[target_gene, ])
+  
+  cosine_vec <- apply(
+    latent[candidate_genes, , drop = FALSE],
+    1,
+    function(x) {
+      x <- as.numeric(x)
+      sum(target_vec * x) /
+        (sqrt(sum(target_vec^2)) * sqrt(sum(x^2)))
+    }
+  )
+  
+  cosine_vec <- cosine_vec[!is.na(cosine_vec)]
+  
+  if (!is.null(min_similarity)) {
+    cosine_vec <- cosine_vec[cosine_vec >= min_similarity]
+  }
+  
+  top_neighbors <- sort(cosine_vec, decreasing = TRUE)[
+    1:min(n, length(cosine_vec))
+  ]
+  
+  data.frame(
+    hub_gene = target_gene,
+    neighbor_gene = names(top_neighbors),
+    latent_similarity = as.numeric(top_neighbors)
+  )
+}
+
+# 3. Get latent neighbors
+latent_hub_neighbors <- lapply(
+  hub_gene_ids,
+  function(g) {
+    get_top_neighbors_latent(
+      target_gene = g,
+      latent = latent,
+      n = top_neighbors_per_hub,
+      min_similarity = min_similarity
+    )
+  }
+) |>
+  dplyr::bind_rows()
+
+# 4. Add gene symbols
+all_plot_genes <- unique(c(
+  latent_hub_neighbors$hub_gene,
+  latent_hub_neighbors$neighbor_gene
+))
+
+gene_map <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = all_plot_genes,
+  keytype = "ENSEMBL",
+  columns = "SYMBOL"
+) |>
+  dplyr::filter(!is.na(SYMBOL)) |>
+  dplyr::distinct(ENSEMBL, .keep_all = TRUE)
+
+latent_hub_neighbors <- latent_hub_neighbors |>
+  dplyr::left_join(
+    gene_map |> dplyr::rename(hub_symbol = SYMBOL),
+    by = c("hub_gene" = "ENSEMBL")
+  ) |>
+  dplyr::left_join(
+    gene_map |> dplyr::rename(neighbor_symbol = SYMBOL),
+    by = c("neighbor_gene" = "ENSEMBL")
+  )
+
+# 5. Nodes
+nodes_hub <- latent_hub_neighbors |>
+  dplyr::select(
+    gene = hub_gene,
+    gene_symbol = hub_symbol
+  ) |>
+  dplyr::distinct() |>
+  dplyr::mutate(node_type = "hub")
+
+nodes_neighbor <- latent_hub_neighbors |>
+  dplyr::select(
+    gene = neighbor_gene,
+    gene_symbol = neighbor_symbol
+  ) |>
+  dplyr::distinct() |>
+  dplyr::mutate(node_type = "neighbor")
+
+nodes_for_plot <- dplyr::bind_rows(nodes_hub, nodes_neighbor) |>
+  dplyr::distinct(gene, .keep_all = TRUE) |>
+  dplyr::mutate(
+    label_to_show = dplyr::if_else(!is.na(gene_symbol), gene_symbol, gene)
+  )
+
+# 6. GO annotation
+all_symbols <- nodes_for_plot |>
+  dplyr::pull(gene_symbol) |>
+  unique() |>
+  na.omit()
+
+
+GO_full <- AnnotationDbi::select(
+  org.Rn.eg.db,
+  keys = all_symbols,
+  keytype = "SYMBOL",
+  columns = c("SYMBOL", "GO", "ONTOLOGY")
+) |>
+  dplyr::filter(!is.na(GO), ONTOLOGY == "BP")
+
+GO_terms <- AnnotationDbi::select(
+  GO.db,
+  keys = unique(GO_full$GO),
+  keytype = "GOID",
+  columns = "TERM"
+)
+
+GO_full_named <- GO_full |>
+  dplyr::left_join(GO_terms, by = c("GO" = "GOID")) |>
+  dplyr::filter(!is.na(TERM))
+
+gene_GO_fallback <- GO_full_named |>
+  dplyr::group_by(SYMBOL) |>
+  dplyr::summarise(
+    GO_process = dplyr::first(TERM),
+    .groups = "drop"
+  )
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::left_join(
+    gene_GO_fallback,
+    by = c("gene_symbol" = "SYMBOL")
+  ) |>
+  dplyr::mutate(
+    GO_process = dplyr::case_when(
+      node_type == "hub" ~ "Hub genes",
+      !is.na(GO_process) ~ GO_process,
+      TRUE ~ "No GO annotation"
+    )
+  )
+
+# 7. Layout: compact readable version
+cluster_radius <- 1200
+local_min <- 80
+local_max <- 250
+
+hub_positions <- nodes_for_plot |>
+  dplyr::filter(node_type == "hub") |>
+  dplyr::mutate(
+    x = rnorm(dplyr::n(), mean = 0, sd = 120),
+    y = rnorm(dplyr::n(), mean = 0, sd = 120)
+  ) |>
+  dplyr::select(gene, x, y)
+
+GO_levels <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::pull(GO_process) |>
+  unique()
+
+GO_centers <- data.frame(
+  GO_process = GO_levels,
+  center_x = cluster_radius * cos(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1]),
+  center_y = cluster_radius * sin(seq(0, 2 * pi, length.out = length(GO_levels) + 1)[-1])
+)
+
+neighbor_positions <- nodes_for_plot |>
+  dplyr::filter(node_type == "neighbor") |>
+  dplyr::left_join(GO_centers, by = "GO_process") |>
+  dplyr::group_by(GO_process) |>
+  dplyr::mutate(
+    local_angle = seq(0, 2 * pi, length.out = dplyr::n() + 1)[-1],
+    local_radius = runif(dplyr::n(), local_min, local_max),
+    x = center_x + local_radius * cos(local_angle),
+    y = center_y + local_radius * sin(local_angle)
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(gene, x, y)
+
+node_positions <- dplyr::bind_rows(hub_positions, neighbor_positions) |>
+  dplyr::distinct(gene, .keep_all = TRUE)
+
+nodes_for_plot <- nodes_for_plot |>
+  dplyr::left_join(node_positions, by = "gene")
+
+# 8. Edges
+edges_plot <- latent_hub_neighbors |>
+  dplyr::select(
+    from = hub_gene,
+    to = neighbor_gene,
+    weight = latent_similarity
+  ) |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("from" = "gene")
+  ) |>
+  dplyr::rename(x_from = x, y_from = y) |>
+  dplyr::left_join(
+    nodes_for_plot |> dplyr::select(gene, x, y),
+    by = c("to" = "gene")
+  ) |>
+  dplyr::rename(x_to = x, y_to = y) |>
+  dplyr::filter(
+    !is.na(x_from),
+    !is.na(y_from),
+    !is.na(x_to),
+    !is.na(y_to)
+  )
+
+# 9. Colors
+GO_color_levels <- unique(nodes_for_plot$GO_process)
+
+GO_palette <- colorRampPalette(
+  RColorBrewer::brewer.pal(12, "Set3")
+)(length(GO_color_levels))
+
+names(GO_palette) <- GO_color_levels
+GO_palette["Hub genes"] <- "red"
+GO_palette["No GO annotation"] <- "grey75"
+
+# 10. Plot
+p_latent_hub_network_readable <- ggplot() +
+  geom_segment(
+    data = edges_plot,
+    aes(
+      x = x_from,
+      y = y_from,
+      xend = x_to,
+      yend = y_to,
+      alpha = weight
+    ),
+    color = "grey45",
+    linewidth = 0.35,
+    show.legend = FALSE
+  ) +
+  geom_point(
+    data = nodes_for_plot,
+    aes(
+      x = x,
+      y = y,
+      fill = GO_process,
+      size = node_type
+    ),
+    shape = 21,
+    color = "black",
+    stroke = 0.25,
+    alpha = 0.95
+  ) +
+  geom_text(
+    data = nodes_for_plot |> dplyr::filter(node_type == "hub"),
+    aes(
+      x = x,
+      y = y,
+      label = label_to_show
+    ),
+    size = 4,
+    vjust = -1
+  ) +
+  scale_fill_manual(
+    values = GO_palette,
+    name = "GO Biological Process"
+  ) +
+  scale_size_manual(
+    values = c(hub = 10, neighbor = 5),
+    name = "Node type"
+  ) +
+  scale_alpha_continuous(range = c(0.2, 0.85)) +
+  coord_equal() +
+  theme_void() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 8),
+    legend.title = element_text(size = 10)
+  )
+
+# 11. Save and open inside R
+out_file <- "/home/aleks/Desktop/latent_hub_network_readable.png"
+
+
+ggsave(
+  filename = out_file,
+  plot = p_latent_hub_network_readable,
+  width = 36,
+  height = 28,
+  dpi = 400,
+  limitsize = FALSE
+)
+
+img <- png::readPNG(out_file)
+grid::grid.newpage()
+grid::grid.raster(img)
+```
+
+```{r}
+#Count how many hub genes each neighbor touches
+neighbor_counts <- sapply(
+  neighbor_proteins,
+  function(x) {
+    
+    sum(
+      (hub_interactions$X.node1 == x &
+         hub_interactions$node2 %in% overlap_hubs) |
+      (hub_interactions$node2 == x &
+         hub_interactions$X.node1 %in% overlap_hubs)
+    )
+  }
+)
+View(neighbor_counts)
+```
+
+```{r}
+#Create a table
+neighbor_df <- data.frame(
+  protein = names(neighbor_counts),
+  n_hub_connections = neighbor_counts
+)
+
+neighbor_df <- neighbor_df[
+  order(neighbor_df$n_hub_connections, decreasing = TRUE),
+]
+
+# head(neighbor_df, 30)
+```
+
+## Watch wich neighboors of my hub-genes are DEG
+
+```{r}
+library(AnnotationDbi)
+library(org.Rn.eg.db)
+
+deg_table <- as.data.frame(res_human_vs_chimp)
+
+# Save Ensembl IDs from rownames
+deg_table$gene_id <- rownames(deg_table)
+
+# Remove possible Ensembl version suffix, if present
+deg_table$gene_id_clean <- sub("\\..*$", "", deg_table$gene_id)
+
+# Map rat Ensembl IDs to gene symbols
+deg_table$symbol <- mapIds(
+  org.Rn.eg.db,
+  keys = deg_table$gene_id_clean,
+  keytype = "ENSEMBL",
+  column = "SYMBOL",
+  multiVals = "first"
+)
+
+head(deg_table[, c("gene_id", "gene_id_clean", "symbol")], 20)
+
+
+neighbor_deg <- deg_table[
+  deg_table$symbol %in% neighbor_df$protein,
+]
+
+neighbor_deg$n_hub_connections <- neighbor_df$n_hub_connections[
+  match(neighbor_deg$symbol, neighbor_df$protein)
+]
+
+# Keep only statistically significant DEGs
+neighbor_deg <- subset(
+  neighbor_deg,
+  !is.na(padj) & padj < 0.1
+)
+
+# Sort by significance
+neighbor_deg <- neighbor_deg[
+  order(neighbor_deg$padj),
+]
+
+neighbor_deg[, c(
+  "symbol",
+  "log2FoldChange",
+  "pvalue",
+  "padj",
+  "n_hub_connections"
+)]
+
+```
+
+## ХОЧУ НАЙТИ BRIDGE GENES
+
+```{r}
+
+library(WGCNA)
+library(dplyr)
+library(tibble)
+
+datExpr <- gsg_human_vs_chimp_vsn_counts
+
+moduleColors <- blockwisenet$colors
+names(moduleColors) <- colnames(datExpr)
+
+MEs <- blockwisenet$MEs
+
+# Checks
+dim(datExpr)
+length(moduleColors)
+length(moduleColors) == ncol(datExpr)
+head(moduleColors)
+head(MEs)
+
+# Create gene-module membership table
+geneModuleMembership <- as.data.frame(
+  WGCNA::cor(
+    datExpr,
+    MEs,
+    use = "p",
+    method = "spearman"
+  )
+)
+
+# Important: rows are genes, so assign gene names
+rownames(geneModuleMembership) <- colnames(datExpr)
+
+# Add gene column
+geneModuleMembership <- geneModuleMembership |>
+  tibble::rownames_to_column("gene")
+
+# Find WGCNA bridge genes:
+# genes strongly associated with at least 2 module eigengenes
+bridge_genes_wgcna <- geneModuleMembership |>
+  dplyr::rowwise() |>
+  dplyr::mutate(
+    n_strong_modules = sum(abs(dplyr::c_across(starts_with("ME"))) >= 0.6),
+    strongest_module = names(which.max(abs(dplyr::c_across(starts_with("ME"))))),
+    strongest_kME = max(abs(dplyr::c_across(starts_with("ME"))))
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::filter(n_strong_modules >= 2) |>
+  dplyr::arrange(
+    dplyr::desc(n_strong_modules),
+    dplyr::desc(strongest_kME)
+  )
+
+
+#ДУМАЮ ВОТ ЧТО КАСАЕТСЯ ТОП 30 ГЕНОВ ЭТУ ЧАСТЬ МОЖНО УДАЛЯТЬ, ЛУЧШЕ ИСПОЛЬЗОВАТЬ ВСЕ ЗНАЧИМЫЕ С ЗНАЧИМЫМ LogFoldChange
+# # Top 30 bridge genes
+# top30_bridge_genes <- bridge_genes_wgcna |>
+#   dplyr::slice_head(n = 30)
+# 
+# # Convert DESeq2 result to dataframe
+# res_human_vs_chimp_df <- as.data.frame(res_human_vs_chimp) |>
+#   tibble::rownames_to_column("gene")
+# 
+# # Check which top30 bridge genes are DEG
+# bridge_deg <- top30_bridge_genes |>
+#   dplyr::left_join(
+#     res_human_vs_chimp_df,
+#     by = "gene"
+#   ) |>
+#   dplyr::mutate(
+#     is_DEG = !is.na(padj) &
+#       padj < 0.05 &
+#       abs(log2FoldChange) > 1
+#   ) |>
+#   dplyr::arrange(
+#     dplyr::desc(is_DEG),
+#     padj,
+#     dplyr::desc(abs(log2FoldChange))
+#   )
+# 
+# 
+# #записываю в txt файл deg bridge gene names
+# bridge_gene_names <- top30_bridge_genes$gene
+
+# 
+# write.table(
+#   bridge_gene_names,
+#   file = "/home/aleks/Desktop/GO:Enrichment project/STRING_BRIDGE_GENES/top30_bridge_genes.txt",
+#   quote = FALSE,
+#   row.names = FALSE,
+#   col.names = FALSE
+# )
+
+# View(top30_bridge_genes)
+# View(bridge_deg)
+```
+
+```{r}
+
+# Significant bridge genes with >= 2-fold change
+
+bridge_genes_DEG_2fold <- bridge_genes_wgcna |>
+  dplyr::left_join(
+    res_human_vs_chimp_df,
+    by = "gene"
+  ) |>
+  dplyr::filter(
+    !is.na(padj),
+    padj < 0.05,
+    abs(log2FoldChange) > 1
+  ) |>
+  dplyr::arrange(
+    padj,
+    dplyr::desc(abs(log2FoldChange))
+  )
+
+View(bridge_genes_DEG_2fold)
+
+# Save gene names
+# 
+# bridge_gene_names <- bridge_genes_DEG_2fold$gene
+# 
+# write.table(
+#   bridge_gene_names,
+#   file = "/home/aleks/Desktop/GO:Enrichment project/STRING_BRIDGE_GENES/significant_bridge_genes_2fold.txt",
+#   quote = FALSE,
+#   row.names = FALSE,
+#   col.names = FALSE
+# )
+```
+
+## STRING network genes that are differentially expressed
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(tibble)
+library(clusterProfiler)
+library(org.Rn.eg.db)
+
+# 1. Read STRING file
+string_tbl <- read.delim(
+  "/home/aleks/Desktop/GO:Enrichment project/STRING_BRIDGE_GENES/neighboors for the bridge-genes/string_interactions_short.tsv",
+  header = TRUE,
+  sep = "\t"
+)
+
+# 2. DESeq results: Ensembl IDs are in rownames
+res_human_vs_chimp_df <- as.data.frame(res_human_vs_chimp) |>
+  tibble::rownames_to_column("ensembl_gene")
+
+# 3. Clean Ensembl IDs if needed
+res_human_vs_chimp_df <- res_human_vs_chimp_df |>
+  dplyr::mutate(
+    ensembl_gene_clean = gsub("\\..*", "", ensembl_gene)
+  )
+
+# 4. Map Ensembl IDs to gene symbols
+gene_map <- clusterProfiler::bitr(
+  res_human_vs_chimp_df$ensembl_gene_clean,
+  fromType = "ENSEMBL",
+  toType = "SYMBOL",
+  OrgDb = org.Rn.eg.db
+)
+
+# 5. Add SYMBOL to DESeq results
+res_human_vs_chimp_symbol <- res_human_vs_chimp_df |>
+  dplyr::left_join(
+    gene_map,
+    by = c("ensembl_gene_clean" = "ENSEMBL")
+  )
+
+# 6. Extract unique STRING genes from both interaction columns
+string_genes <- string_tbl |>
+  dplyr::select(X.node1, node2) |>
+  tidyr::pivot_longer(
+    cols = everything(),
+    values_to = "SYMBOL"
+  ) |>
+  dplyr::select(SYMBOL) |>
+  dplyr::distinct()
+
+# 7. Join STRING genes with DESeq results by SYMBOL
+string_genes_deg <- string_genes |>
+  dplyr::left_join(
+    res_human_vs_chimp_symbol,
+    by = "SYMBOL"
+  ) |>
+  dplyr::mutate(
+    is_DEG = !is.na(padj) &
+      padj < 0.05 &
+      abs(log2FoldChange) > 1
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(is_DEG),
+    padj,
+    dplyr::desc(abs(log2FoldChange))
+  )
+
+# View(string_genes_deg)
+
+# Optional: only significant DEG genes from STRING
+string_genes_DEG_only <- string_genes_deg |>
+  dplyr::filter(is_DEG)
+
+View(string_genes_DEG_only)
+```
