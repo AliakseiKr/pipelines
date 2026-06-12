@@ -328,7 +328,7 @@ length(down_genes)
 length(up_genes)
 ```
 
-#Возможно можно сразу начать с этого
+
 
 ## Loading Autoencoder results
 
@@ -716,7 +716,6 @@ visNetwork(vis_nodes, vis_edges, height = "850px", width = "100%") |>
 ## Посмотреть с какими GO в наибольшей степеени коррелирует тот или иной GO по количеству нитей
 
 ```{r}
-#ВОЗМОЖНО ЭТОТ ЧАНК НУЖЕН ДЛЯ ЗАПУСКА НИЗ-ИДУЩЕГО, ЕСЛИ НЕТ _ УДАЛИ
 
 latent_mat <- as.matrix(latent)
 
@@ -949,7 +948,6 @@ vis_edges <- edges_selected_GO |>
 ```
 
 ```{r,fig.height=20, fig.width=20}
-#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
 
 # library(dplyr)
 # library(ggplot2)
@@ -1090,7 +1088,6 @@ vis_edges <- edges_selected_GO |>
 ```
 
 ```{r}
-#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
 
 
 # library(dplyr)
@@ -1304,8 +1301,6 @@ vis_edges <- edges_selected_GO |>
 ```
 
 # 3D GO-gene network with shared core genes
-
-#Без этого чанка не хочет запускаться следующий основной
 
 ```{r,fig.height=20, fig.width=20}
 #ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
@@ -1636,9 +1631,7 @@ vis_edges <- edges_selected_GO |>
 ```
 
 ```{r}
-#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
-# # 
-# # 
+ 
 # # Rebuild long gene-GO annotation preserving duplicated gene-GO memberships(ниже он есть в блоке 7)
 # # gene_GO_annotation_long <- go_graph_df |>
 # #   dplyr::select(
@@ -2030,10 +2023,7 @@ vis_edges <- edges_selected_GO |>
 #   )
 # 
 # p
-# 
-# 
-# 
-# #МОЖНО ЕЩЁ ПОДОБНО ФОРМАТА СДЕЛАТЬ НО НЕ 3Д А С ТОЧКАМИ КАК РАНЬШЕ
+
 
 
 ```
@@ -2045,7 +2035,6 @@ vis_edges <- edges_selected_GO |>
 ```
 
 ```{r,fig.height=20, fig.width=20}
-#ПЛОХО ПАШЕТ R, ПОЭТОМУ ПОКА ЧТО ЭТОТ ЧАНК ВЫКЛЮЧУ ЧТОБЫ НЕ ЖРАЛ ЭЛЕКТРИЧЕСТВО
 # library(dplyr)
 # library(ggplot2)
 # library(ggrepel)
@@ -2452,8 +2441,6 @@ vis_edges <- edges_selected_GO |>
 ```
 
 ```{r}
-#чтобы графики выглядели менее запутанно попробуй сперва сгруппировать несколько GO в один генеральный GO процесс(например, рост нейронов итд) как ты это делал раньше, и уже от него ищи с кем там он коррелирует(но сперва разберись, не будет ли это слишком грубый анализ)
-```
 
 # В ПОИСКАХ HUB GENES FROM WGCNA
 
@@ -2535,7 +2522,6 @@ dim(gsg_human_vs_chimp_vsn_counts_corrected)
 ```
 
 ```{r}
-#ТУТ ВОЗМОЖНО СЛЕДУЕТ ОПРОБОВАТЬ РАЗНЫЕ СОФТ ПАВЕР ПОПРОБОВАТЬ И СМОТРЕТЬ ПО СМЫСЛУ ЧТО БОЛЬШЕ ПОДХОДИТ. ПОТОМУ ЧТО 29 ВРОДЕ КАК НЕ ТИПИЧНО БОЛЬШОЕ ЗНАЧЕНИЕ SOFT POWER
 
 #| results: false
 
@@ -3238,15 +3224,11 @@ p_wgcna_string <- ggplot() +
   )
 
 p_wgcna_string
-
-
-
-
-
 ```
 
+
 ```{r}
-#тут получилось близко, но нету названий генов
+#без названий генов
 # library(dplyr)
 # library(tidyr)
 # library(tibble)
@@ -3751,7 +3733,6 @@ p_wgcna_string
 
 ```{r,fig.height=16, fig.width=16}
 
-#ВОТ ТУТ ПОЛУЧИЛОСЬ ЧТО НУЖНО
 #отсортированный(согласно GO), WGCNA hub-centered network
 library(dplyr)
 library(tidyr)
@@ -5078,8 +5059,6 @@ bridge_genes_wgcna <- geneModuleMembership |>
     dplyr::desc(strongest_kME)
   )
 
-
-#ДУМАЮ ВОТ ЧТО КАСАЕТСЯ ТОП 30 ГЕНОВ ЭТУ ЧАСТЬ МОЖНО УДАЛЯТЬ, ЛУЧШЕ ИСПОЛЬЗОВАТЬ ВСЕ ЗНАЧИМЫЕ С ЗНАЧИМЫМ LogFoldChange
 # # Top 30 bridge genes
 # top30_bridge_genes <- bridge_genes_wgcna |>
 #   dplyr::slice_head(n = 30)
